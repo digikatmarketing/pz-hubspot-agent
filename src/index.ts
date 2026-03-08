@@ -83,6 +83,10 @@ if (!process.env.HUBSPOT_ACCESS_TOKEN) {
   console.error("Missing HUBSPOT_ACCESS_TOKEN in .env");
   process.exit(1);
 }
+if (!process.env.APP_PASSWORD) {
+  console.error("Missing APP_PASSWORD in .env");
+  process.exit(1);
+}
 
 // ── Express app ──────────────────────────────────────────────────────
 

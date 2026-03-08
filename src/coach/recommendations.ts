@@ -18,6 +18,7 @@ import {
 } from "../hubspot/client.js";
 import { stageName, UI_DOMAIN, HUB_ID } from "../hubspot/types.js";
 import type { SearchFilter } from "../hubspot/types.js";
+import { toHsTimestamp } from "../reports/date-ranges.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -102,7 +103,7 @@ interface EnrichedContact {
 function daysAgo(days: number): string {
   const d = new Date();
   d.setDate(d.getDate() - days);
-  return d.toISOString();
+  return toHsTimestamp(d);
 }
 
 async function gatherHotLeadData(): Promise<EnrichedContact[]> {

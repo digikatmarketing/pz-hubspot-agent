@@ -1811,7 +1811,6 @@
 
         // Auth state
         authenticated: false,
-        authToken: null,
         loginPassword: '',
         loginError: '',
         loginLoading: false,
@@ -1886,7 +1885,6 @@
             });
             const data = await res.json();
             if (res.ok && data.ok) {
-              this.authToken = data.token;
               this.authenticated = true;
               this.loginPassword = '';
               this.connect();
@@ -1903,7 +1901,6 @@
         async logout() {
           try { await fetch('/api/auth/logout', { method: 'POST' }); } catch {}
           this.authenticated = false;
-          this.authToken = null;
           if (this.ws) { this.ws.close(); this.ws = null; }
           this.status = 'disconnected';
           this.messages = [];
@@ -1912,9 +1909,7 @@
 
         connect() {
           const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-          // Pass auth token as query param for WebSocket auth
-          const tokenParam = this.authToken ? `?token=${this.authToken}` : '';
-          this.ws = new WebSocket(`${proto}//${location.host}${tokenParam}`);
+          this.ws = new WebSocket(`${proto}//${location.host}`);
 
           this.ws.onopen = () => {
             this.status = 'idle';

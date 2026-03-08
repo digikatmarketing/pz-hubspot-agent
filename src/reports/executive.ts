@@ -14,6 +14,7 @@ import {
   groupByProperty,
   groupByPropertyWithSum,
 } from "./aggregation.js";
+import { getCached, setCache } from "./cache.js";
 import { ORDERS_OBJECT_TYPE, AU_STATE_LABELS } from "./constants.js";
 import type { ChartType } from "./constants.js";
 import type { ReportResult } from "./index.js";
@@ -29,6 +30,94 @@ function orderDateFilters(range: DateRange): SearchFilter[] {
     { propertyName: "hs_external_created_date", operator: "GTE", value: toHsTimestamp(range.from) },
     { propertyName: "hs_external_created_date", operator: "LTE", value: toHsTimestamp(range.to) },
   ];
+}
+
+interface CustomerOrderHistory {
+  orderCount: number;
+  revenue: number;
+  firstOrderAt: number;
+  lastOrderAt: number;
+}
+
+const CUSTOMER_HISTORY_CACHE_KEY = "exec_customer_history_v1";
+
+function orderHalfYearFilters(): Array<{
+  filters: Array<{ propertyName: string; operator: string; value: string }>;
+}> {
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const startYear = 2023;
+  const chunks: Array<{
+    filters: Array<{ propertyName: string; operator: string; value: string }>;
+  }> = [];
+
+  for (let year = startYear; year <= currentYear; year++) {
+    chunks.push({
+      filters: [
+        { propertyName: "hs_external_created_date", operator: "GTE", value: toHsTimestamp(new Date(year, 0, 1)) },
+        { propertyName: "hs_external_created_date", operator: "LT", value: toHsTimestamp(new Date(year, 6, 1)) },
+      ],
+    });
+
+    if (year < currentYear || now.getMonth() >= 6) {
+      chunks.push({
+        filters: [
+          { propertyName: "hs_external_created_date", operator: "GTE", value: toHsTimestamp(new Date(year, 6, 1)) },
+          { propertyName: "hs_external_created_date", operator: "LT", value: toHsTimestamp(new Date(year + 1, 0, 1)) },
+        ],
+      });
+    }
+  }
+
+  return chunks;
+}
+
+async function getAllTimeCustomerHistory(): Promise<Map<string, CustomerOrderHistory>> {
+  const cached = getCached<Array<[string, CustomerOrderHistory]>>(CUSTOMER_HISTORY_CACHE_KEY);
+  if (cached) return new Map(cached);
+
+  const history = new Map<string, CustomerOrderHistory>();
+
+  for (const chunk of orderHalfYearFilters()) {
+    let after: string | undefined;
+
+    for (let page = 0; page < 50; page++) {
+      const res = await searchObjects(ORDERS_OBJECT_TYPE, {
+        filterGroups: [{ filters: chunk.filters as SearchFilter[] }],
+        properties: ["hs_billing_address_name", "hs_total_price", "hs_external_created_date"],
+        limit: 200,
+        ...(after ? { after } : {}),
+      });
+
+      for (const order of res.results) {
+        const rawName = order.properties.hs_billing_address_name?.trim();
+        if (!rawName) continue;
+
+        const ts = parseInt(order.properties.hs_external_created_date ?? "", 10);
+        if (Number.isNaN(ts)) continue;
+
+        const value = parseFloat(order.properties.hs_total_price ?? "0");
+        const existing = history.get(rawName) ?? {
+          orderCount: 0,
+          revenue: 0,
+          firstOrderAt: ts,
+          lastOrderAt: ts,
+        };
+
+        existing.orderCount += 1;
+        existing.revenue += Number.isNaN(value) ? 0 : value;
+        existing.firstOrderAt = Math.min(existing.firstOrderAt, ts);
+        existing.lastOrderAt = Math.max(existing.lastOrderAt, ts);
+        history.set(rawName, existing);
+      }
+
+      if (!res.paging?.next?.after) break;
+      after = res.paging.next.after;
+    }
+  }
+
+  setCache(CUSTOMER_HISTORY_CACHE_KEY, Array.from(history.entries()));
+  return history;
 }
 
 // ── 1. Total Revenue (from Shopify orders) ──────────────────────────
@@ -131,21 +220,24 @@ export async function execNewPatients(range: DateRange): Promise<ReportResult> {
 // ── 5. Returning Patients (contacts with 2+ Shopify orders) ─────────
 
 export async function execReturningPatients(range: DateRange): Promise<ReportResult> {
-  // Approximate returning patients by grouping orders by billing name
-  // Contacts appearing more than once = returning patients
-  const groups = await groupByProperty(
-    ORDERS_OBJECT_TYPE,
-    [{
-      filters: orderDateFilters(range),
-    }],
-    "hs_billing_address_name",
-    undefined,
-    50, // Paginate deeply for accuracy
-  );
+  const [groups, customerHistory] = await Promise.all([
+    groupByProperty(
+      ORDERS_OBJECT_TYPE,
+      [{ filters: orderDateFilters(range) }],
+      "hs_billing_address_name",
+      undefined,
+      50,
+    ),
+    getAllTimeCustomerHistory(),
+  ]);
 
-  const uniqueCustomers = groups.length;
-  const returningCustomers = groups.filter((g) => g.count > 1).length;
-  const totalOrders = groups.reduce((s, g) => s + g.count, 0);
+  const customersInRange = groups.filter((g) => g.value !== "(empty)" && g.value.trim() !== "");
+  const uniqueCustomers = customersInRange.length;
+  const returningCustomers = customersInRange.filter((g) => {
+    const history = customerHistory.get(g.value);
+    return Boolean(history && history.firstOrderAt < range.from.getTime());
+  }).length;
+  const totalOrders = customersInRange.reduce((s, g) => s + g.count, 0);
 
   return {
     reportId: "exec_returning_patients",
@@ -162,23 +254,26 @@ export async function execReturningPatients(range: DateRange): Promise<ReportRes
 // ── 6. New Treatments vs Renewals ───────────────────────────────────
 
 export async function execNewVsRenewals(range: DateRange): Promise<ReportResult> {
-  // Group orders by billing name to identify first-time vs repeat purchasers
-  const groups = await groupByProperty(
-    ORDERS_OBJECT_TYPE,
-    [{
-      filters: orderDateFilters(range),
-    }],
-    "hs_billing_address_name",
-    undefined,
-    50,
-  );
+  const [groups, customerHistory] = await Promise.all([
+    groupByProperty(
+      ORDERS_OBJECT_TYPE,
+      [{ filters: orderDateFilters(range) }],
+      "hs_billing_address_name",
+      undefined,
+      50,
+    ),
+    getAllTimeCustomerHistory(),
+  ]);
 
-  const newCustomers = groups.filter((g) => g.count === 1).length;
-  const repeatCustomers = groups.filter((g) => g.count > 1).length;
-  // Total repeat orders (sum of orders from customers with >1 order, minus their first)
-  const repeatOrders = groups
-    .filter((g) => g.count > 1)
-    .reduce((s, g) => s + (g.count - 1), 0);
+  const customersInRange = groups.filter((g) => g.value !== "(empty)" && g.value.trim() !== "");
+  const newCustomers = customersInRange.filter((g) => {
+    const history = customerHistory.get(g.value);
+    return Boolean(history && history.firstOrderAt >= range.from.getTime());
+  }).length;
+  const repeatCustomers = customersInRange.filter((g) => {
+    const history = customerHistory.get(g.value);
+    return Boolean(history && history.firstOrderAt < range.from.getTime());
+  }).length;
 
   return {
     reportId: "exec_new_vs_renewals",
@@ -449,21 +544,10 @@ export async function execAgeBrackets(_range: DateRange): Promise<ReportResult> 
 // ── 14. Patient Lifetime Value ──────────────────────────────────────
 
 export async function execPatientLTV(range: DateRange): Promise<ReportResult> {
-  // Group orders by billing name within date range, sum hs_total_price per customer.
-  // Uses date-filtered query to stay under HubSpot's 10K pagination cap.
-  const groups = await groupByPropertyWithSum(
-    ORDERS_OBJECT_TYPE,
-    [{ filters: orderDateFilters(range) }],
-    "hs_billing_address_name",
-    "hs_total_price",
-    undefined,
-    50, // Max 10K results (50 * 200)
-  );
-
-  // Filter out empty names
-  const customers = groups.filter((g) => g.value !== "(empty)" && g.value.trim() !== "");
+  const customerHistory = await getAllTimeCustomerHistory();
+  const customers = Array.from(customerHistory.values());
   const totalCustomers = customers.length;
-  const totalRevenue = customers.reduce((s, g) => s + g.sum, 0);
+  const totalRevenue = customers.reduce((sum, customer) => sum + customer.revenue, 0);
   const avgLTV = totalCustomers > 0 ? totalRevenue / totalCustomers : 0;
 
   return {
@@ -473,8 +557,7 @@ export async function execPatientLTV(range: DateRange): Promise<ReportResult> {
     dateRange: { from: range.from.toISOString(), to: range.to.toISOString(), label: range.label },
     data: {
       kpiValue: `$${avgLTV.toFixed(0)}`,
-      kpiDelta: `Average across ${totalCustomers.toLocaleString()} customers`,
+      kpiDelta: `All-time average across ${totalCustomers.toLocaleString()} customers`,
     },
   };
 }
-

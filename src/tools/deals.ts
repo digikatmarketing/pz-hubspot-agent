@@ -2,7 +2,7 @@
  * Deal tools — search, get, update, move stage
  */
 
-import { searchObjects, getObject, updateObject } from "../hubspot/client.js";
+import { searchObjects, getObject, updateObject, getAssociations, batchRead } from "../hubspot/client.js";
 import { STAGES, stageName, PIPELINE_ID, UI_DOMAIN, HUB_ID } from "../hubspot/types.js";
 import type { ToolDef } from "./index.js";
 
@@ -84,18 +84,33 @@ export const dealTools: ToolDef[] = [
 
       // Contact association filter needs a different approach — search by contact
       if (contact_id) {
-        // Use HubSpot's association filter via search
-        const res = await searchObjects("deals", {
-          filterGroups: [{ filters }],
-          properties: DEAL_PROPS,
-          limit: 10,
-          query,
-        });
+        const assocRes = await getAssociations("contacts", contact_id, "deals", 500);
+        const dealIds = assocRes.results.flatMap((r) => r.to.map((t) => t.toObjectId));
 
-        // Post-filter is needed unless we use association search
-        // For simplicity, use the query-based search and note the limitation
-        const deals = res.results.map(formatDeal);
-        return { total: res.total, showing: deals.length, deals, note: "Filtered by pipeline/stage. For contact-specific deals, use get_contact_deals." };
+        if (dealIds.length === 0) {
+          return { total: 0, showing: 0, deals: [] };
+        }
+
+        const deals = (await batchRead("deals", dealIds, DEAL_PROPS))
+          .filter((deal) => deal.properties.pipeline === PIPELINE_ID)
+          .filter((deal) => !stage || deal.properties.dealstage === filters.find((f) => f.propertyName === "dealstage")?.value)
+          .filter((deal) => {
+            if (!query) return true;
+            const name = (deal.properties.dealname ?? "").toLowerCase();
+            return name.includes(query.toLowerCase());
+          })
+          .sort((a, b) => {
+            const aCreated = new Date(a.properties.createdate ?? 0).getTime();
+            const bCreated = new Date(b.properties.createdate ?? 0).getTime();
+            return bCreated - aCreated;
+          })
+          .map(formatDeal);
+
+        return {
+          total: deals.length,
+          showing: Math.min(deals.length, 10),
+          deals: deals.slice(0, 10),
+        };
       }
 
       const res = await searchObjects("deals", {

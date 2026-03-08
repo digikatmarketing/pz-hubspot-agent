@@ -24,6 +24,7 @@ import {
 } from "../hubspot/client.js";
 import { stageName, UI_DOMAIN, HUB_ID } from "../hubspot/types.js";
 import type { SearchFilter } from "../hubspot/types.js";
+import { toHsTimestamp } from "../reports/date-ranges.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -129,7 +130,7 @@ interface NewLead {
 }
 
 async function findNewLeads(): Promise<NewLead[]> {
-  const lookbackDate = new Date(Date.now() - LOOKBACK_MINUTES * 60 * 1000).toISOString();
+  const lookbackDate = toHsTimestamp(new Date(Date.now() - LOOKBACK_MINUTES * 60 * 1000));
 
   // Two parallel queries: new contacts + recent form submissions
   const [newContacts, recentForms] = await Promise.all([

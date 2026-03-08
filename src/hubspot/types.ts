@@ -60,6 +60,10 @@ export interface AssociationResponse {
   paging?: { next?: { after: string } };
 }
 
+export interface BatchAssociationResponse {
+  results: AssociationResult[];
+}
+
 // ── Pipeline constants ───────────────────────────────────────────────
 
 export const PIPELINE_ID = "2063105729";

@@ -129,7 +129,7 @@ export async function opsDealsByOwner(range: DateRange): Promise<ReportResult> {
 export async function opsStaleDealsSummary(_range: DateRange): Promise<ReportResult> {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - 30);
-  const cutoffStr = cutoff.getTime().toString();
+  const cutoffStr = toHsTimestamp(cutoff);
 
   // Count stale deals per active stage (exclude Approved/Cancelled)
   const activeStages = Object.values(STAGES).filter(
@@ -138,11 +138,12 @@ export async function opsStaleDealsSummary(_range: DateRange): Promise<ReportRes
 
   const counts = await Promise.all(
     activeStages.map(async (stage) => {
+      const enteredProperty = `hs_v2_date_entered_${stage.id}`;
       const count = await aggregateCount("deals", [{
         filters: [
           { propertyName: "pipeline", operator: "EQ", value: PIPELINE_ID },
           { propertyName: "dealstage", operator: "EQ", value: stage.id },
-          { propertyName: "createdate", operator: "LT", value: cutoffStr },
+          { propertyName: enteredProperty, operator: "LT", value: cutoffStr },
         ],
       }]);
       return { label: stage.label, count };

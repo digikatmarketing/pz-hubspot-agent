@@ -161,7 +161,7 @@ export async function runReport(
   if (!meta) throw new Error(`Unknown report: ${reportId}`);
 
   const rk = rangeKey ?? meta.defaultRange;
-  const ck = cacheKey(reportId, rk);
+  const ck = cacheKey(reportId, rk, custom);
 
   // Check cache
   const cached = getCached<ReportResult>(ck);

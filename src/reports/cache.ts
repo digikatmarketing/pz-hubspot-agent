@@ -33,7 +33,16 @@ export function clearCache(): void {
 }
 
 /** Build a cache key from report ID and date range */
-export function cacheKey(reportId: string, rangeKey: string): string {
+export function cacheKey(
+  reportId: string,
+  rangeKey: string,
+  custom?: { from: string; to: string },
+): string {
+  if (rangeKey === "custom" && custom) {
+    const from = encodeURIComponent(custom.from);
+    const to = encodeURIComponent(custom.to);
+    return `report:${reportId}:custom:${from}__${to}`;
+  }
   return `report:${reportId}:${rangeKey}`;
 }
 

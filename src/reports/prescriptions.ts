@@ -4,6 +4,7 @@
  */
 
 import { PRESCRIPTIONS_OBJECT_TYPE } from "../hubspot/types.js";
+import { batchReadAssociations, searchObjects } from "../hubspot/client.js";
 import type { SearchFilter } from "../hubspot/types.js";
 import { toHsTimestamp, type DateRange } from "./date-ranges.js";
 import {
@@ -11,8 +12,85 @@ import {
   monthlyBreakdown,
   groupByProperty,
 } from "./aggregation.js";
+import { getCached, setCache } from "./cache.js";
 import { RX_STATUS_LABELS } from "./constants.js";
 import type { ReportResult } from "./index.js";
+
+const RX_PATIENT_COUNT_CACHE_KEY = "rx_unique_patients_v1";
+
+function prescriptionHalfYearFilters(): Array<{
+  filters: Array<{ propertyName: string; operator: string; value: string }>;
+}> {
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const startYear = 2023;
+  const chunks: Array<{
+    filters: Array<{ propertyName: string; operator: string; value: string }>;
+  }> = [];
+
+  for (let year = startYear; year <= currentYear; year++) {
+    chunks.push({
+      filters: [
+        { propertyName: "hs_createdate", operator: "GTE", value: toHsTimestamp(new Date(year, 0, 1)) },
+        { propertyName: "hs_createdate", operator: "LT", value: toHsTimestamp(new Date(year, 6, 1)) },
+      ],
+    });
+
+    if (year < currentYear || now.getMonth() >= 6) {
+      chunks.push({
+        filters: [
+          { propertyName: "hs_createdate", operator: "GTE", value: toHsTimestamp(new Date(year, 6, 1)) },
+          { propertyName: "hs_createdate", operator: "LT", value: toHsTimestamp(new Date(year + 1, 0, 1)) },
+        ],
+      });
+    }
+  }
+
+  return chunks;
+}
+
+async function getUniquePrescriptionPatientCount(): Promise<number> {
+  const cached = getCached<number>(RX_PATIENT_COUNT_CACHE_KEY);
+  if (cached !== null) return cached;
+
+  const contactIds = new Set<string>();
+  const chunks = prescriptionHalfYearFilters();
+
+  for (const chunk of chunks) {
+    let after: string | undefined;
+
+    for (let page = 0; page < 50; page++) {
+      const res = await searchObjects(PRESCRIPTIONS_OBJECT_TYPE, {
+        filterGroups: [{ filters: chunk.filters as SearchFilter[] }],
+        properties: ["hs_object_id"],
+        limit: 200,
+        ...(after ? { after } : {}),
+      });
+
+      const prescriptionIds = res.results.map((rx) => rx.id);
+      if (prescriptionIds.length > 0) {
+        const assocRes = await batchReadAssociations(
+          PRESCRIPTIONS_OBJECT_TYPE,
+          "contacts",
+          prescriptionIds,
+        );
+
+        for (const result of assocRes.results) {
+          for (const associated of result.to) {
+            contactIds.add(associated.toObjectId);
+          }
+        }
+      }
+
+      if (!res.paging?.next?.after) break;
+      after = res.paging.next.after;
+    }
+  }
+
+  const count = contactIds.size;
+  setCache(RX_PATIENT_COUNT_CACHE_KEY, count);
+  return count;
+}
 
 // ── 1. Rx by Status ────────────────────────────────────────────────
 
@@ -141,12 +219,7 @@ export async function rxPerContact(_range: DateRange): Promise<ReportResult> {
     filters: [],
   }]);
 
-  // Contacts that have at least one prescription association
-  const contactsWithRx = await aggregateCount("contacts", [{
-    filters: [
-      { propertyName: "num_associated_deals", operator: "GT", value: "0" },
-    ],
-  }]);
+  const contactsWithRx = await getUniquePrescriptionPatientCount();
 
   const avg = contactsWithRx > 0 ? (totalRx / contactsWithRx).toFixed(1) : "0";
 

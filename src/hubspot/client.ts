@@ -8,6 +8,7 @@ import type {
   SearchResponse,
   HubSpotObject,
   AssociationResponse,
+  BatchAssociationResponse,
 } from "./types.js";
 
 // ── Config ───────────────────────────────────────────────────────────
@@ -183,6 +184,20 @@ export async function getAssociations(
   return request<AssociationResponse>(
     "GET",
     `/crm/v4/objects/${fromType}/${fromId}/associations/${toType}?limit=${limit}`,
+  );
+}
+
+export async function batchReadAssociations(
+  fromType: string,
+  toType: string,
+  fromIds: string[],
+): Promise<BatchAssociationResponse> {
+  return request<BatchAssociationResponse>(
+    "POST",
+    `/crm/v4/associations/${fromType}/${toType}/batch/read`,
+    {
+      inputs: fromIds.map((id) => ({ id })),
+    },
   );
 }
 
