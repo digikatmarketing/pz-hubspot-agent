@@ -88,19 +88,19 @@ export async function getSummaryKPIs(): Promise<SummaryKPI[]> {
 
   const result: SummaryKPI[] = [
     {
-      label: "Total Revenue",
+      label: "All-Time Revenue",
       value: `$${totalRevenue.toLocaleString("en-AU", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`,
     },
     {
-      label: "Total Patients",
+      label: "All-Time Patients",
       value: patientsResult.toLocaleString(),
     },
     {
-      label: "Total Orders",
+      label: "All-Time Orders",
       value: ordersResult.toLocaleString(),
     },
     {
-      label: "Active Rx",
+      label: "Current Active Rx",
       value: activeRxResult.toLocaleString(),
     },
   ];

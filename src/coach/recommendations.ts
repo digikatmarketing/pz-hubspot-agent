@@ -20,6 +20,7 @@ import { stageName, UI_DOMAIN, HUB_ID } from "../hubspot/types.js";
 import type { SearchFilter } from "../hubspot/types.js";
 import { toHsTimestamp } from "../reports/date-ranges.js";
 import { getFirstOpenTaskForContact, getOpenTasksByContactIds, invalidateTaskGuard } from "./task-guard.js";
+import type { OpenTaskSummary } from "./task-guard.js";
 import {
   addAuditEvent,
   clearSuppression,
@@ -57,6 +58,9 @@ export interface SalesRecommendation {
   trustSignals?: string[];
   activitySummary?: string[];
   createdAtTs?: number | null;
+  monitorOnly?: boolean;
+  existingTaskSubject?: string | null;
+  existingTaskDueDate?: string | null;
 }
 
 export interface SalesRecommendationsResult {
@@ -120,6 +124,7 @@ interface EnrichedContact {
   properties: Record<string, string | null>;
   signals: string[];
   deal: { id: string; name: string | null; stage: string | null } | null;
+  openTask: OpenTaskSummary | null;
 }
 
 function parseTimestamp(value: string | null | undefined): number | null {
@@ -174,6 +179,7 @@ function computeUrgencyScore(rec: SalesRecommendation, contact?: EnrichedContact
   if (dealStage === "Lead") score += 30;
   if (dealStage === "Meeting Booked") score -= 10;
   if (dealStage === "Approved by Doctor") score -= 20;
+  if (contact?.openTask) score -= 250;
 
   return score;
 }
@@ -352,6 +358,7 @@ async function gatherHotLeadData(): Promise<{
           properties: c.properties,
           signals: [signalLabel],
           deal: null,
+          openTask: null,
         });
       }
     }
@@ -365,9 +372,11 @@ async function gatherHotLeadData(): Promise<{
 
   const dedupedContacts = Array.from(contactMap.values()).slice(0, 30);
   const openTasksByContact = await getOpenTasksByContactIds(dedupedContacts.map((contact) => contact.id));
-  const contactsWithoutOpenTasks = dedupedContacts.filter((contact) => !openTasksByContact.has(contact.id));
-  const contacts = contactsWithoutOpenTasks.filter((contact) => !isSuppressed(contact.id));
-  const skippedExistingTasks = dedupedContacts.length - contactsWithoutOpenTasks.length;
+  for (const contact of dedupedContacts) {
+    contact.openTask = openTasksByContact.get(contact.id)?.[0] ?? null;
+  }
+  const contacts = dedupedContacts.filter((contact) => !isSuppressed(contact.id));
+  const skippedExistingTasks = dedupedContacts.filter((contact) => Boolean(contact.openTask)).length;
 
   await Promise.all(
     contacts.map(async (contact) => {
@@ -548,15 +557,23 @@ export async function generateSalesRecommendations(): Promise<SalesRecommendatio
         taskId: null,
         taskUrl: null,
       };
+      const openTask = contact?.openTask ?? null;
       const rankScore = computeUrgencyScore(baseRec, contact);
       return {
         ...baseRec,
-        rankScore,
-        urgencyBucket: getUrgencyBucket(rankScore),
+        activated: Boolean(openTask),
+        taskId: openTask?.id ?? null,
+        taskUrl: openTask?.url ?? null,
+        taskState: openTask ? "existing" as const : undefined,
+        rankScore: openTask ? Math.min(rankScore, 199) : rankScore,
+        urgencyBucket: openTask ? "monitor" : getUrgencyBucket(rankScore),
         triggerSignals: contact?.signals ?? [],
         trustSignals: buildTrustSignals(contact),
         activitySummary: buildActivitySummary(contact),
         createdAtTs: parseTimestamp(contact?.properties.createdate),
+        monitorOnly: Boolean(openTask),
+        existingTaskSubject: openTask?.subject ?? null,
+        existingTaskDueDate: openTask?.dueDate ?? null,
       };
     }).sort((a, b) => (b.rankScore ?? 0) - (a.rankScore ?? 0));
 

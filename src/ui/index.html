@@ -1720,13 +1720,18 @@
       </div>
 
       <!-- Summary KPI row -->
-      <div class="summary-row" x-show="summaryKPIs.length > 0">
-        <template x-for="kpi in summaryKPIs" :key="kpi.label">
-          <div class="summary-kpi">
-            <div class="summary-kpi-value" x-text="kpi.value"></div>
-            <div class="summary-kpi-label" x-text="kpi.label"></div>
-          </div>
-        </template>
+      <div x-show="summaryKPIs.length > 0">
+        <div style="color:var(--text-muted);font-size:12px;margin:0 0 10px 2px;">
+          Headline KPIs are all-time / current-state metrics. The date filter applies to the report cards below.
+        </div>
+        <div class="summary-row">
+          <template x-for="kpi in summaryKPIs" :key="kpi.label">
+            <div class="summary-kpi">
+              <div class="summary-kpi-value" x-text="kpi.value"></div>
+              <div class="summary-kpi-label" x-text="kpi.label"></div>
+            </div>
+          </template>
+        </div>
       </div>
 
       <!-- Loading -->
@@ -1903,7 +1908,7 @@
           <span x-show="salesCoachData" style="font-size:12px;color:var(--text-muted);"
             x-text="(salesCoachData?.contactsAnalysed || 0) + ' contacts analysed · ' + (salesCoachData?.signalsFound || 0) + ' signals'"></span>
           <span x-show="salesCoachData && salesCoachData?.skippedExistingTasks" style="font-size:12px;color:var(--text-muted);"
-            x-text="(salesCoachData?.skippedExistingTasks || 0) + ' skipped — open task already exists'"></span>
+            x-text="(salesCoachData?.skippedExistingTasks || 0) + ' monitor only — open task already exists'"></span>
           <button class="header button" style="background:var(--border);color:var(--text-muted);border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;"
             @click="refreshSalesCoach()">Refresh</button>
         </div>
@@ -2059,6 +2064,17 @@
                 </div>
               </div>
 
+              <div class="sc-section" x-show="rec.monitorOnly">
+                <div class="sc-section-label">👀 Monitoring</div>
+                <div class="sc-playbook">
+                  Open task already exists for this contact, so this stays in monitor mode rather than creating another task.
+                </div>
+                <div class="sc-mini-list" style="margin-top:8px;">
+                  <span class="sc-mini-pill" x-show="rec.existingTaskSubject" x-text="rec.existingTaskSubject"></span>
+                  <span class="sc-mini-pill" x-show="rec.existingTaskDueDate" x-text="'Due ' + fmtDate(rec.existingTaskDueDate)"></span>
+                </div>
+              </div>
+
               <!-- Playbook -->
               <div class="sc-section">
                 <div class="sc-section-label">📋 Playbook</div>
@@ -2087,14 +2103,14 @@
               <!-- Footer: activate or activated state -->
               <div class="sc-card-footer">
                 <button class="sc-activate-btn"
-                  x-show="!rec.activated"
+                  x-show="!rec.activated && !rec.monitorOnly"
                   @click="activateRecommendationByContact(rec.contactId)"
                   :disabled="rec._activating"
                   x-text="rec._activating ? 'Creating...' : '📞 Create Task for Ben'">
                 </button>
-                <button class="sc-secondary-btn" x-show="!rec.activated" @click="suppressRecommendationByContact(rec.contactId)">Suppress 7 days</button>
+                <button class="sc-secondary-btn" x-show="!rec.monitorOnly && !rec.activated" @click="suppressRecommendationByContact(rec.contactId)">Suppress 7 days</button>
                 <div class="sc-activated-badge" x-show="rec.activated" x-cloak>
-                  <span x-text="rec.taskState === 'existing' ? '✅ Task Already Exists' : '✅ Task Created'"></span>
+                  <span x-text="rec.monitorOnly ? '👀 Monitoring Existing Task' : rec.taskState === 'existing' ? '✅ Task Already Exists' : '✅ Task Created'"></span>
                   <a x-show="rec.taskUrl" :href="rec.taskUrl" target="_blank" rel="noopener">View Task ↗</a>
                 </div>
                 <a :href="rec.contactUrl" target="_blank" rel="noopener"
