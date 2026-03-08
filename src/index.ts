@@ -42,7 +42,11 @@ import {
   getSalesRecommendations,
   isSalesCoachCacheValid,
   activateRecommendation,
+  suppressRecommendation,
+  listSalesCoachSuppressions,
+  clearSuppressedSalesCoachContact,
 } from "./coach/recommendations.js";
+import { getAuditLog } from "./coach/store.js";
 import {
   startAutopilot,
   stopAutopilot,
@@ -282,6 +286,31 @@ app.post("/api/coach/recommendations/:index/activate", async (req, res) => {
   }
 });
 
+app.post("/api/coach/recommendations/:index/suppress", (req, res) => {
+  try {
+    const index = parseInt(req.params.index, 10);
+    const reason = req.body?.reason ? String(req.body.reason) : undefined;
+    const result = suppressRecommendation(index, reason);
+    res.json({ ok: true, ...result, remaining: getSalesRecommendations() });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/coach/suppressions", (_req, res) => {
+  res.json({ suppressions: listSalesCoachSuppressions() });
+});
+
+app.delete("/api/coach/suppressions/:contactId", (req, res) => {
+  const removed = clearSuppressedSalesCoachContact(req.params.contactId);
+  res.json({ ok: removed });
+});
+
+app.get("/api/coach/audit", (req, res) => {
+  const limit = parseInt(req.query.limit as string, 10) || 50;
+  res.json({ events: getAuditLog(limit) });
+});
+
 // ── Auto-Pilot — automatic task creation for new leads ───────────────
 
 app.get("/api/autopilot/status", (_req, res) => {
@@ -348,12 +377,15 @@ server.listen(PORT, () => {
   `);
 
   // Warm-up: pre-load all reports, then generate AI recommendations.
-  // Runs in background — doesn't block the server.
-  warmAllReports()
-    .then(() => generateRecommendations())
-    .catch((err) =>
-      console.error("[WARM] Startup warm-up failed:", err),
-    );
+  // Delay startup warm-up slightly so the app becomes interactive before heavy HubSpot traffic begins.
+  const startupWarmDelayMs = Math.max(0, parseInt(process.env.REPORT_WARM_START_DELAY_MS ?? "15000", 10));
+  setTimeout(() => {
+    warmAllReports()
+      .then(() => generateRecommendations())
+      .catch((err) =>
+        console.error("[WARM] Startup warm-up failed:", err),
+      );
+  }, startupWarmDelayMs);
 
   // Coach: start hourly sales performance agent schedule
   if (process.env.COACH_ENABLED !== "false") {

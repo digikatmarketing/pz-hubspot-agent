@@ -25,7 +25,8 @@ import {
 import { stageName, UI_DOMAIN, HUB_ID } from "../hubspot/types.js";
 import type { SearchFilter } from "../hubspot/types.js";
 import { toHsTimestamp } from "../reports/date-ranges.js";
-import { getFirstOpenTaskForContact, getOpenTasksByContactIds } from "./task-guard.js";
+import { getFirstOpenTaskForContact, getOpenTasksByContactIds, invalidateTaskGuard } from "./task-guard.js";
+import { addAuditEvent, isSuppressed } from "./store.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -193,7 +194,7 @@ async function findNewLeads(): Promise<NewLead[]> {
 
   const dedupedLeads = Array.from(leadMap.values());
   const openTasksByContact = await getOpenTasksByContactIds(dedupedLeads.map((lead) => lead.id));
-  const leads = dedupedLeads.filter((lead) => !openTasksByContact.has(lead.id));
+  const leads = dedupedLeads.filter((lead) => !openTasksByContact.has(lead.id) && !isSuppressed(lead.id));
 
   // Enrich with deal data
   await Promise.all(
@@ -353,6 +354,7 @@ async function analyseAndCreateTasks(leads: NewLead[]): Promise<AutopilotTaskLog
 
       // Track
       _taskedContactIds.add(lead.id);
+      invalidateTaskGuard(lead.id);
       _dailyTaskCount++;
 
       const taskLog: AutopilotTaskLog = {
@@ -371,6 +373,14 @@ async function analyseAndCreateTasks(leads: NewLead[]): Promise<AutopilotTaskLog
       if (_taskLogs.length > MAX_TASK_LOGS) _taskLogs.length = MAX_TASK_LOGS;
 
       taskLogs.push(taskLog);
+
+      addAuditEvent({
+        type: "task_auto_created",
+        contactId: lead.id,
+        contactName: lead.name,
+        message: `Auto-Pilot created task for ${lead.name}`,
+        metadata: { taskId: task.id, actionType: rec.actionType ?? "CALL" },
+      });
 
       console.log(
         `[AUTOPILOT] ✅ Task created: "${rec.title}" for ${lead.name} (ID: ${task.id})`,

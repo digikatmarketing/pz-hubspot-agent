@@ -928,6 +928,75 @@
       color: var(--text-muted);
       font-weight: 400;
     }
+    .today-view {
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      height: 100%;
+      padding: 16px 20px 24px;
+      gap: 16px;
+    }
+    .today-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 14px;
+    }
+    .today-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+    }
+    .today-card h3 {
+      font-size: 14px;
+      margin-bottom: 10px;
+    }
+    .today-metric {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .today-metric strong {
+      font-size: 24px;
+    }
+    .today-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .today-list-item {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .today-list-item .meta {
+      color: var(--text-muted);
+      font-size: 12px;
+      margin-top: 4px;
+    }
+    .sc-controls {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+      align-items: center;
+    }
+    .sc-controls select, .sc-controls input {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+    .sc-controls .meta {
+      color: var(--text-muted);
+      font-size: 12px;
+    }
     .sc-summary-strip {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -1157,6 +1226,29 @@
       font-size: 12px;
     }
     .sc-activated-badge a:hover { text-decoration: underline; }
+    .sc-secondary-btn {
+      background: transparent;
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .sc-secondary-btn:hover { color: var(--text); background: rgba(255,255,255,0.05); }
+    .sc-mini-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .sc-mini-pill {
+      font-size: 11px;
+      color: var(--text-muted);
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border);
+      padding: 3px 8px;
+      border-radius: 999px;
+    }
 
     .sc-deal-tag {
       font-size: 11px;
@@ -1362,6 +1454,10 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
         Chat
       </button>
+      <button :class="{ active: activeView === 'today' }" @click="switchView('today')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18"/><path d="M12 3v18"/></svg>
+        Today
+      </button>
       <button :class="{ active: dashboardOpen }" @click="toggleDashboard()">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
         Pipeline
@@ -1517,6 +1613,83 @@
             </a>
           </div>
         </template>
+      </div>
+    </div>
+
+    <!-- Today Command Center -->
+    <div class="today-view" x-show="activeView === 'today'">
+      <div class="today-grid">
+        <div class="today-card">
+          <h3>Priority Queue</h3>
+          <div class="today-metric"><strong x-text="salesCoachData?.urgencyCounts?.doNow || 0"></strong><span>do now</span></div>
+          <div class="today-list">
+            <template x-for="(rec, idx) in todayDoNow()" :key="'do-now-' + idx">
+              <div class="today-list-item">
+                <div><strong x-text="rec.contactName"></strong></div>
+                <div class="meta" x-text="rec.title"></div>
+              </div>
+            </template>
+            <div class="today-list-item" x-show="todayDoNow().length === 0">No immediate leads right now.</div>
+          </div>
+        </div>
+
+        <div class="today-card">
+          <h3>Business Actions</h3>
+          <div class="today-metric"><strong x-text="todayCriticalActionCount()"></strong><span>critical / high</span></div>
+          <div class="today-list">
+            <template x-for="(action, idx) in todayTopActions()" :key="'action-' + idx">
+              <div class="today-list-item">
+                <div><strong x-text="action.title"></strong></div>
+                <div class="meta" x-text="action.problem"></div>
+              </div>
+            </template>
+            <div class="today-list-item" x-show="todayTopActions().length === 0">Actions are still loading.</div>
+          </div>
+        </div>
+
+        <div class="today-card">
+          <h3>Auto-Pilot</h3>
+          <div class="today-metric"><strong x-text="autopilotStatus?.totalTasksCreated || 0"></strong><span>tasks created</span></div>
+          <div class="meta" style="margin-bottom:8px;" x-text="autopilotStatus?.enabled ? 'Auto-Pilot is running' : 'Auto-Pilot is stopped'"></div>
+          <div class="today-list">
+            <template x-for="(task, idx) in (autopilotStatus?.recentTasks || []).slice(0, 3)" :key="'task-' + idx">
+              <div class="today-list-item">
+                <div><strong x-text="task.contactName"></strong></div>
+                <div class="meta" x-text="task.subject"></div>
+              </div>
+            </template>
+            <div class="today-list-item" x-show="!(autopilotStatus?.recentTasks || []).length">No recent Auto-Pilot tasks.</div>
+          </div>
+        </div>
+
+        <div class="today-card">
+          <h3>Audit Trail</h3>
+          <div class="today-list">
+            <template x-for="(event, idx) in (auditEvents || []).slice(0, 5)" :key="event.id || idx">
+              <div class="today-list-item">
+                <div><strong x-text="event.message"></strong></div>
+                <div class="meta" x-text="timeAgo(event.timestamp)"></div>
+              </div>
+            </template>
+            <div class="today-list-item" x-show="!(auditEvents || []).length">No recent audit events yet.</div>
+          </div>
+        </div>
+
+        <div class="today-card">
+          <h3>Suppressed Contacts</h3>
+          <div class="today-list">
+            <template x-for="(item, idx) in (suppressions || []).slice(0, 5)" :key="item.contactId || idx">
+              <div class="today-list-item">
+                <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;">
+                  <strong x-text="item.contactName"></strong>
+                  <button class="sc-secondary-btn" @click="clearSuppression(item.contactId)">Restore</button>
+                </div>
+                <div class="meta" x-text="item.reason"></div>
+              </div>
+            </template>
+            <div class="today-list-item" x-show="!(suppressions || []).length">No suppressed contacts.</div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1797,6 +1970,28 @@
         </div>
       </template>
 
+      <div class="sc-controls" x-show="salesCoachData && salesCoachData.recommendations.length > 0">
+        <select x-model="salesCoachFilter.urgency">
+          <option value="all">All urgency</option>
+          <option value="do_now">Do Now</option>
+          <option value="do_today">Do Today</option>
+          <option value="monitor">Monitor</option>
+        </select>
+        <select x-model="salesCoachFilter.actionType">
+          <option value="all">All action types</option>
+          <option value="CALL">Call</option>
+          <option value="EMAIL">Email</option>
+          <option value="TODO">Todo</option>
+        </select>
+        <select x-model="salesCoachFilter.sort">
+          <option value="rank">Sort by urgency</option>
+          <option value="newest">Newest lead</option>
+          <option value="name">Name</option>
+        </select>
+        <input type="text" x-model="salesCoachFilter.search" placeholder="Search contact or deal">
+        <span class="meta" x-text="filteredSalesCoachRecommendations().length + ' visible · ' + (salesCoachData?.suppressedCount || 0) + ' suppressed'"></span>
+      </div>
+
       <!-- Loading state -->
       <template x-if="salesCoachLoading">
         <div class="sales-coach-loading">
@@ -1823,9 +2018,9 @@
       </template>
 
       <!-- Recommendation cards -->
-      <template x-if="!salesCoachLoading && !salesCoachError && salesCoachData && salesCoachData.recommendations.length > 0">
+      <template x-if="!salesCoachLoading && !salesCoachError && salesCoachData && filteredSalesCoachRecommendations().length > 0">
         <div style="display:flex;flex-direction:column;gap:16px;padding:0 0 20px;">
-          <template x-for="(rec, idx) in salesCoachData.recommendations" :key="idx">
+          <template x-for="(rec, idx) in filteredSalesCoachRecommendations()" :key="rec.contactId + '-' + idx">
             <div class="sc-card" :class="'priority-' + rec.priority">
               <!-- Header row -->
               <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
@@ -1847,6 +2042,21 @@
               <div class="sc-section">
                 <div class="sc-section-label">📡 Signal</div>
                 <div class="sc-signal" x-text="rec.signal"></div>
+                <div class="sc-mini-list" style="margin-top:8px;">
+                  <template x-for="(item, signalIdx) in (rec.trustSignals || [])" :key="signalIdx">
+                    <span class="sc-mini-pill" x-text="item"></span>
+                  </template>
+                </div>
+              </div>
+
+              <div class="sc-section" x-show="(rec.activitySummary || []).length > 0">
+                <div class="sc-section-label">🔎 Trust Signals</div>
+                <div class="sc-mini-list">
+                  <template x-for="(item, trustIdx) in (rec.activitySummary || [])" :key="trustIdx">
+                    <span class="sc-mini-pill" x-text="item"></span>
+                  </template>
+                  <span class="sc-mini-pill" x-show="rec.rankScore" x-text="'Score ' + rec.rankScore"></span>
+                </div>
               </div>
 
               <!-- Playbook -->
@@ -1878,10 +2088,11 @@
               <div class="sc-card-footer">
                 <button class="sc-activate-btn"
                   x-show="!rec.activated"
-                  @click="activateRecommendation(idx)"
+                  @click="activateRecommendationByContact(rec.contactId)"
                   :disabled="rec._activating"
                   x-text="rec._activating ? 'Creating...' : '📞 Create Task for Ben'">
                 </button>
+                <button class="sc-secondary-btn" x-show="!rec.activated" @click="suppressRecommendationByContact(rec.contactId)">Suppress 7 days</button>
                 <div class="sc-activated-badge" x-show="rec.activated" x-cloak>
                   <span x-text="rec.taskState === 'existing' ? '✅ Task Already Exists' : '✅ Task Created'"></span>
                   <a x-show="rec.taskUrl" :href="rec.taskUrl" target="_blank" rel="noopener">View Task ↗</a>
@@ -1891,6 +2102,13 @@
               </div>
             </div>
           </template>
+        </div>
+      </template>
+
+      <template x-if="!salesCoachLoading && !salesCoachError && salesCoachData && filteredSalesCoachRecommendations().length === 0 && salesCoachData.recommendations.length > 0">
+        <div class="sales-coach-empty">
+          <div style="font-size:32px;margin-bottom:12px;">🧹</div>
+          <div>No recommendations match the current filters.</div>
         </div>
       </template>
     </div>
@@ -1915,7 +2133,7 @@
         loginLoading: false,
 
         // View state
-        activeView: 'chat',   // 'chat', 'reports', 'actions', or 'sales-coach'
+        activeView: 'chat',   // 'chat', 'today', 'reports', 'actions', or 'sales-coach'
 
         // Actions state
         actionsLoading: false,
@@ -1927,6 +2145,16 @@
         salesCoachData: null,
         salesCoachLoading: false,
         salesCoachError: null,
+        salesCoachFilter: {
+          urgency: 'all',
+          actionType: 'all',
+          sort: 'rank',
+          search: '',
+        },
+
+        // Today / audit state
+        auditEvents: [],
+        suppressions: [],
 
         // Auto-Pilot state
         autopilotStatus: null,
@@ -2130,6 +2358,50 @@
           return hrs + 'h ago';
         },
 
+        urgencyLabel(bucket) {
+          if (bucket === 'do_now') return 'Do Now';
+          if (bucket === 'do_today') return 'Do Today';
+          return 'Monitor';
+        },
+
+        todayDoNow() {
+          return (this.salesCoachData?.recommendations || []).filter(r => r.urgencyBucket === 'do_now').slice(0, 3);
+        },
+
+        todayCriticalActionCount() {
+          return (this.actionsData?.recommendations || []).filter(a => ['critical', 'high'].includes(a.priority)).length;
+        },
+
+        todayTopActions() {
+          return (this.actionsData?.recommendations || []).filter(a => ['critical', 'high'].includes(a.priority)).slice(0, 3);
+        },
+
+        filteredSalesCoachRecommendations() {
+          let recs = [...(this.salesCoachData?.recommendations || [])];
+          if (this.salesCoachFilter.urgency !== 'all') {
+            recs = recs.filter(r => r.urgencyBucket === this.salesCoachFilter.urgency);
+          }
+          if (this.salesCoachFilter.actionType !== 'all') {
+            recs = recs.filter(r => r.actionType === this.salesCoachFilter.actionType);
+          }
+          const term = (this.salesCoachFilter.search || '').trim().toLowerCase();
+          if (term) {
+            recs = recs.filter(r =>
+              (r.contactName || '').toLowerCase().includes(term) ||
+              (r.dealName || '').toLowerCase().includes(term) ||
+              (r.title || '').toLowerCase().includes(term)
+            );
+          }
+          if (this.salesCoachFilter.sort === 'name') {
+            recs.sort((a, b) => (a.contactName || '').localeCompare(b.contactName || ''));
+          } else if (this.salesCoachFilter.sort === 'newest') {
+            recs.sort((a, b) => (b.createdAtTs || 0) - (a.createdAtTs || 0));
+          } else {
+            recs.sort((a, b) => (b.rankScore || 0) - (a.rankScore || 0));
+          }
+          return recs;
+        },
+
         // ── Quick-View Side Panel ────────────────────────
         handleChatClick(e) {
           // Find the anchor — could be the target itself or a parent
@@ -2279,6 +2551,9 @@
         // ── View switching ─────────────────────────────────
         switchView(view) {
           this.activeView = view;
+          if (view === 'today') {
+            this.loadToday();
+          }
           if (view === 'reports') {
             if (this.reportResults.length === 0) {
               this.loadReports();
@@ -2294,6 +2569,8 @@
           if (view === 'sales-coach') {
             if (!this.salesCoachData) this.loadSalesCoach();
             this.loadAutopilotStatus();
+            this.loadSuppressions();
+            this.loadAuditLog();
           }
         },
 
@@ -2585,7 +2862,7 @@
               // Auto-retry in 10 seconds
               if (this._actionsPollTimer) clearTimeout(this._actionsPollTimer);
               this._actionsPollTimer = setTimeout(() => {
-                if (this.activeView === 'actions' && this.actionsPending) {
+                if ((this.activeView === 'actions' || this.activeView === 'today') && this.actionsPending) {
                   this.loadActions();
                 }
               }, 10000);
@@ -2608,6 +2885,12 @@
           this.$nextTick(() => this.send());
         },
 
+        async loadToday() {
+          if (!this.salesCoachData) await this.loadSalesCoach();
+          if (!this.actionsData) await this.loadActions();
+          await Promise.all([this.loadAutopilotStatus(), this.loadAuditLog(), this.loadSuppressions()]);
+        },
+
         // ── Sales Coach ─────────────────────────────────────
         _initSalesCoachRecs(data) {
           // Ensure _activating property exists on each rec for Alpine reactivity
@@ -2624,6 +2907,7 @@
             const res = await fetch('/api/coach/recommendations');
             if (!res.ok) throw new Error('Failed to load recommendations');
             this.salesCoachData = this._initSalesCoachRecs(await res.json());
+            this.loadSuppressions();
           } catch (e) {
             this.salesCoachError = e.message || 'Failed to load recommendations';
           }
@@ -2639,10 +2923,35 @@
             });
             if (!res.ok) throw new Error('Failed to generate recommendations');
             this.salesCoachData = this._initSalesCoachRecs(await res.json());
+            this.loadSuppressions();
           } catch (e) {
             this.salesCoachError = e.message || 'Failed to generate recommendations';
           }
           this.salesCoachLoading = false;
+        },
+
+        async loadSuppressions() {
+          try {
+            const res = await fetch('/api/coach/suppressions');
+            if (res.ok) {
+              const data = await res.json();
+              this.suppressions = data.suppressions || [];
+            }
+          } catch {}
+        },
+
+        async loadAuditLog() {
+          try {
+            const res = await fetch('/api/coach/audit?limit=20');
+            if (res.ok) {
+              const data = await res.json();
+              this.auditEvents = data.events || [];
+            }
+          } catch {}
+        },
+
+        recommendationIndexByContact(contactId) {
+          return (this.salesCoachData?.recommendations || []).findIndex(r => r.contactId === contactId);
         },
 
         async activateRecommendation(index) {
@@ -2666,6 +2975,45 @@
             alert('Error: ' + (e.message || 'Could not create task'));
           }
           rec._activating = false;
+          this.loadAuditLog();
+        },
+
+        activateRecommendationByContact(contactId) {
+          const index = this.recommendationIndexByContact(contactId);
+          if (index >= 0) return this.activateRecommendation(index);
+        },
+
+        async suppressRecommendationByContact(contactId) {
+          const index = this.recommendationIndexByContact(contactId);
+          if (index < 0) return;
+          try {
+            const res = await fetch(`/api/coach/recommendations/${index}/suppress`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ reason: 'Known issue / false positive' }),
+            });
+            if (!res.ok) {
+              const err = await res.json().catch(() => ({}));
+              throw new Error(err.error || 'Failed to suppress recommendation');
+            }
+            const data = await res.json();
+            this.salesCoachData = this._initSalesCoachRecs(data.remaining);
+            this.loadSuppressions();
+            this.loadAuditLog();
+          } catch (e) {
+            alert('Error: ' + (e.message || 'Could not suppress recommendation'));
+          }
+        },
+
+        async clearSuppression(contactId) {
+          try {
+            const res = await fetch(`/api/coach/suppressions/${contactId}`, { method: 'DELETE' });
+            if (!res.ok) throw new Error('Failed to clear suppression');
+            await this.loadSuppressions();
+            await this.loadAuditLog();
+          } catch (e) {
+            alert('Error: ' + (e.message || 'Could not clear suppression'));
+          }
         },
 
         copyCopyExample(text, event) {

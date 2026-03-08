@@ -19,7 +19,14 @@ import {
 import { stageName, UI_DOMAIN, HUB_ID } from "../hubspot/types.js";
 import type { SearchFilter } from "../hubspot/types.js";
 import { toHsTimestamp } from "../reports/date-ranges.js";
-import { getFirstOpenTaskForContact, getOpenTasksByContactIds } from "./task-guard.js";
+import { getFirstOpenTaskForContact, getOpenTasksByContactIds, invalidateTaskGuard } from "./task-guard.js";
+import {
+  addAuditEvent,
+  clearSuppression,
+  getSuppressions,
+  isSuppressed,
+  suppressContact,
+} from "./store.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -46,6 +53,10 @@ export interface SalesRecommendation {
   taskState?: "new" | "existing";
   urgencyBucket?: "do_now" | "do_today" | "monitor";
   rankScore?: number;
+  triggerSignals?: string[];
+  trustSignals?: string[];
+  activitySummary?: string[];
+  createdAtTs?: number | null;
 }
 
 export interface SalesRecommendationsResult {
@@ -59,6 +70,7 @@ export interface SalesRecommendationsResult {
     doToday: number;
     monitor: number;
   };
+  suppressedCount: number;
 }
 
 // ── Config ───────────────────────────────────────────────────────────
@@ -182,6 +194,45 @@ function countUrgencyBuckets(recommendations: SalesRecommendation[]) {
     },
     { doNow: 0, doToday: 0, monitor: 0 },
   );
+}
+
+function humanizeSignal(signal: string): string {
+  return signal
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function buildActivitySummary(contact?: EnrichedContact): string[] {
+  if (!contact) return [];
+  const summary: string[] = [];
+
+  const pageViews = Number(contact.properties.hs_analytics_num_page_views ?? "0");
+  if (pageViews > 0) summary.push(`${pageViews} page views`);
+
+  const visits = Number(contact.properties.hs_analytics_num_visits ?? "0");
+  if (visits > 0) summary.push(`${visits} sessions`);
+
+  const lastVisitHours = hoursSince(contact.properties.hs_analytics_last_visit_timestamp);
+  if (lastVisitHours !== null) summary.push(`Last visit ${Math.max(1, Math.round(lastVisitHours))}h ago`);
+
+  const createdHours = hoursSince(contact.properties.createdate);
+  if (createdHours !== null) summary.push(`Lead age ${Math.max(1, Math.round(createdHours))}h`);
+
+  if (contact.deal?.stage) summary.push(`Deal stage: ${contact.deal.stage}`);
+
+  return summary.slice(0, 4);
+}
+
+function buildTrustSignals(contact?: EnrichedContact): string[] {
+  if (!contact) return [];
+  return contact.signals.map(humanizeSignal);
+}
+
+function recalculateCacheMetrics(): void {
+  if (!_cache) return;
+  _cache.urgencyCounts = countUrgencyBuckets(_cache.recommendations);
+  _cache.suppressedCount = getSuppressions().length;
 }
 
 function daysAgo(days: number): string {
@@ -314,8 +365,9 @@ async function gatherHotLeadData(): Promise<{
 
   const dedupedContacts = Array.from(contactMap.values()).slice(0, 30);
   const openTasksByContact = await getOpenTasksByContactIds(dedupedContacts.map((contact) => contact.id));
-  const contacts = dedupedContacts.filter((contact) => !openTasksByContact.has(contact.id));
-  const skippedExistingTasks = dedupedContacts.length - contacts.length;
+  const contactsWithoutOpenTasks = dedupedContacts.filter((contact) => !openTasksByContact.has(contact.id));
+  const contacts = contactsWithoutOpenTasks.filter((contact) => !isSuppressed(contact.id));
+  const skippedExistingTasks = dedupedContacts.length - contactsWithoutOpenTasks.length;
 
   await Promise.all(
     contacts.map(async (contact) => {
@@ -406,6 +458,7 @@ export async function generateSalesRecommendations(): Promise<SalesRecommendatio
       signalsFound: 0,
       skippedExistingTasks,
       urgencyCounts: { doNow: 0, doToday: 0, monitor: 0 },
+      suppressedCount: getSuppressions().length,
     };
     _cache = result;
     _cacheTime = Date.now();
@@ -500,6 +553,10 @@ export async function generateSalesRecommendations(): Promise<SalesRecommendatio
         ...baseRec,
         rankScore,
         urgencyBucket: getUrgencyBucket(rankScore),
+        triggerSignals: contact?.signals ?? [],
+        trustSignals: buildTrustSignals(contact),
+        activitySummary: buildActivitySummary(contact),
+        createdAtTs: parseTimestamp(contact?.properties.createdate),
       };
     }).sort((a, b) => (b.rankScore ?? 0) - (a.rankScore ?? 0));
 
@@ -512,6 +569,7 @@ export async function generateSalesRecommendations(): Promise<SalesRecommendatio
       signalsFound: totalSignals,
       skippedExistingTasks,
       urgencyCounts,
+      suppressedCount: getSuppressions().length,
     };
 
     _cache = result;
@@ -540,6 +598,52 @@ export function isSalesCoachCacheValid(): boolean {
   return isCacheValid();
 }
 
+export function listSalesCoachSuppressions() {
+  return getSuppressions();
+}
+
+export function suppressRecommendation(index: number, reason = "Known issue / false positive") {
+  if (!_cache) throw new Error("No recommendations cached — generate first");
+  if (index < 0 || index >= _cache.recommendations.length) {
+    throw new Error(`Invalid recommendation index: ${index}`);
+  }
+
+  const rec = _cache.recommendations[index];
+  const suppression = suppressContact({
+    contactId: rec.contactId,
+    contactName: rec.contactName,
+    reason,
+    source: "sales_coach",
+    days: 7,
+  });
+
+  _cache.recommendations = _cache.recommendations.filter((item) => item.contactId !== rec.contactId);
+  recalculateCacheMetrics();
+
+  addAuditEvent({
+    type: "recommendation_suppressed",
+    contactId: rec.contactId,
+    contactName: rec.contactName,
+    message: `Suppressed Sales Coach recommendation for ${rec.contactName}`,
+    metadata: { reason },
+  });
+
+  return { suppression, recommendation: rec };
+}
+
+export function clearSuppressedSalesCoachContact(contactId: string) {
+  const removed = clearSuppression(contactId);
+  if (removed) {
+    addAuditEvent({
+      type: "suppression_cleared",
+      contactId,
+      message: `Cleared suppression for ${contactId}`,
+    });
+    recalculateCacheMetrics();
+  }
+  return removed;
+}
+
 // ── Activate a recommendation (create HubSpot task) ─────────────────
 
 export async function activateRecommendation(
@@ -564,6 +668,13 @@ export async function activateRecommendation(
     rec.taskId = existingTask.id;
     rec.taskUrl = existingTask.url;
     rec.taskState = "existing";
+    addAuditEvent({
+      type: "task_existing",
+      contactId: rec.contactId,
+      contactName: rec.contactName,
+      message: `Existing task reused for ${rec.contactName}`,
+      metadata: { taskId: existingTask.id, urgency: rec.urgencyBucket ?? null },
+    });
     return rec;
   }
 
@@ -618,6 +729,15 @@ export async function activateRecommendation(
   rec.taskId = task.id;
   rec.taskUrl = `https://${UI_DOMAIN}/contacts/${HUB_ID}/task/${task.id}`;
   rec.taskState = "new";
+  invalidateTaskGuard(rec.contactId);
+
+  addAuditEvent({
+    type: "task_created",
+    contactId: rec.contactId,
+    contactName: rec.contactName,
+    message: `Manual Sales Coach task created for ${rec.contactName}`,
+    metadata: { taskId: task.id, actionType: rec.actionType, urgency: rec.urgencyBucket ?? null },
+  });
 
   console.log(
     `[SALES COACH] Task created for "${rec.contactName}" — ` +
