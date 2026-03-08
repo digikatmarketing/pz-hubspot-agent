@@ -250,17 +250,30 @@ export function getReportCacheStats() {
 
 // ── Warm-up: pre-load all reports across all date ranges ─────────────
 
-const WARM_RANGES: DateRangeKey[] = ["last_30", "mtd", "last_90", "ltm", "ytd"];
+const DEFAULT_WARM_RANGES: DateRangeKey[] = ["last_30", "mtd", "ltm"];
 const ALL_DASHBOARDS: DashboardId[] = ["executive", "operations", "prescriptions"];
+
+function getWarmRanges(): DateRangeKey[] {
+  const raw = process.env.REPORT_WARM_RANGES?.trim();
+  if (!raw) return DEFAULT_WARM_RANGES;
+
+  const requested = raw
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean) as DateRangeKey[];
+
+  return requested.length > 0 ? requested : DEFAULT_WARM_RANGES;
+}
 
 /** Pre-load every report for every date range. Runs sequentially to
  *  respect the rate limiter. Returns total reports warmed. */
 export async function warmAllReports(): Promise<number> {
   let count = 0;
   const startTime = Date.now();
-  console.log(`[WARM] Starting report warm-up across ${WARM_RANGES.length} date ranges...`);
+  const warmRanges = getWarmRanges();
+  console.log(`[WARM] Starting report warm-up across ${warmRanges.length} date ranges...`);
 
-  for (const range of WARM_RANGES) {
+  for (const range of warmRanges) {
     for (const dash of ALL_DASHBOARDS) {
       const dashReports = getReportsForDashboard(dash);
       for (const meta of dashReports) {

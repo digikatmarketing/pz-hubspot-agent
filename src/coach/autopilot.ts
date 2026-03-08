@@ -4,7 +4,7 @@
  * Runs every 15 minutes (configurable). On each tick:
  *   1. Queries HubSpot for new contacts created in the last 20 minutes
  *   2. Checks for high-signal contacts (multi-signal, form + visit combo)
- *   3. Skips any contacts that already have a task from us
+ *   3. Skips any contacts that already have an open HubSpot task
  *   4. Sends qualifying contacts to Claude for analysis
  *   5. Auto-creates HubSpot tasks for HOT-priority recommendations
  *   6. Logs everything — viewable in the UI
@@ -25,6 +25,7 @@ import {
 import { stageName, UI_DOMAIN, HUB_ID } from "../hubspot/types.js";
 import type { SearchFilter } from "../hubspot/types.js";
 import { toHsTimestamp } from "../reports/date-ranges.js";
+import { getFirstOpenTaskForContact, getOpenTasksByContactIds } from "./task-guard.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -85,7 +86,7 @@ let _isRunning = false;
 
 const _runLogs: AutopilotRunLog[] = [];
 const _taskLogs: AutopilotTaskLog[] = [];
-const _taskedContactIds = new Set<string>(); // Contacts we've already created tasks for
+const _taskedContactIds = new Set<string>(); // Contacts we've already created tasks for in this runtime
 let _dailyTaskCount = 0;
 let _dailyResetDate = new Date().toDateString();
 
@@ -167,7 +168,7 @@ async function findNewLeads(): Promise<NewLead[]> {
       const name = `${c.properties.firstname ?? ""} ${c.properties.lastname ?? ""}`.trim();
       if (!name) continue;
 
-      // Skip contacts we've already created tasks for
+      // Skip contacts we've already created tasks for in this runtime
       if (_taskedContactIds.has(c.id)) continue;
 
       const existing = leadMap.get(c.id);
@@ -190,7 +191,9 @@ async function findNewLeads(): Promise<NewLead[]> {
   addLeads(newContacts.results, "new_lead");
   addLeads(recentForms.results, "form_submission");
 
-  const leads = Array.from(leadMap.values());
+  const dedupedLeads = Array.from(leadMap.values());
+  const openTasksByContact = await getOpenTasksByContactIds(dedupedLeads.map((lead) => lead.id));
+  const leads = dedupedLeads.filter((lead) => !openTasksByContact.has(lead.id));
 
   // Enrich with deal data
   await Promise.all(
@@ -315,8 +318,12 @@ async function analyseAndCreateTasks(leads: NewLead[]): Promise<AutopilotTaskLog
     const lead = leads.find((l) => l.id === rec.contactId);
     if (!lead) continue;
 
-    // Skip if we've already tasked this contact (race condition guard)
+    // Skip if we've already tasked this contact (runtime guard)
     if (_taskedContactIds.has(lead.id)) continue;
+
+    // Skip if HubSpot already has an open task for this contact
+    const existingTask = await getFirstOpenTaskForContact(lead.id);
+    if (existingTask) continue;
 
     try {
       // Due date: today + 2 hours (urgent follow-up)
@@ -409,6 +416,7 @@ async function runCoreScan(): Promise<AutopilotRunLog> {
     const leads = await findNewLeads();
     log.contactsScanned = leads.length + _taskedContactIds.size;
     log.newLeadsFound = leads.length;
+    log.skippedAlreadyTasked = _taskedContactIds.size;
 
     if (leads.length > 0) {
       console.log(`[AUTOPILOT] ${leads.length} new leads found — analysing...`);

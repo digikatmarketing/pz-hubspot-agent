@@ -928,6 +928,41 @@
       color: var(--text-muted);
       font-weight: 400;
     }
+    .sc-summary-strip {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .sc-summary-item {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .sc-summary-item.primary {
+      border-color: rgba(239,68,68,0.3);
+      background: rgba(239,68,68,0.06);
+    }
+    .sc-summary-value {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .sc-summary-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+    }
+    .sc-summary-detail {
+      font-size: 12px;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
     .sc-card {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -960,6 +995,31 @@
     .sc-badge.hot { background: #ef4444; }
     .sc-badge.warm { background: #f59e0b; color: #000; }
     .sc-badge.follow-up { background: #3b82f6; }
+    .sc-urgency {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      border: 1px solid transparent;
+    }
+    .sc-urgency.do_now {
+      background: rgba(239,68,68,0.12);
+      color: #fca5a5;
+      border-color: rgba(239,68,68,0.3);
+    }
+    .sc-urgency.do_today {
+      background: rgba(245,158,11,0.12);
+      color: #fcd34d;
+      border-color: rgba(245,158,11,0.28);
+    }
+    .sc-urgency.monitor {
+      background: rgba(59,130,246,0.12);
+      color: #93c5fd;
+      border-color: rgba(59,130,246,0.28);
+    }
 
     .sc-action-type {
       display: inline-block;
@@ -1591,6 +1651,10 @@
                   </div>
                 </template>
               </div>
+              <div x-show="!report._loading" style="padding:0 16px 14px;color:var(--text-muted);font-size:11px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+                <span x-text="report.dateRange?.label || ''"></span>
+                <span x-text="(report.cached ? 'Cached' : 'Fresh') + (report.generatedAt ? ' · Updated ' + timeAgo(report.generatedAt) : '')"></span>
+              </div>
             </div>
           </template>
         </div>
@@ -1665,6 +1729,8 @@
         <div style="display:flex;align-items:center;gap:10px;">
           <span x-show="salesCoachData" style="font-size:12px;color:var(--text-muted);"
             x-text="(salesCoachData?.contactsAnalysed || 0) + ' contacts analysed · ' + (salesCoachData?.signalsFound || 0) + ' signals'"></span>
+          <span x-show="salesCoachData && salesCoachData?.skippedExistingTasks" style="font-size:12px;color:var(--text-muted);"
+            x-text="(salesCoachData?.skippedExistingTasks || 0) + ' skipped — open task already exists'"></span>
           <button class="header button" style="background:var(--border);color:var(--text-muted);border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;"
             @click="refreshSalesCoach()">Refresh</button>
         </div>
@@ -1700,6 +1766,37 @@
         </div>
       </div>
 
+      <template x-if="salesCoachData && salesCoachData.recommendations.length > 0">
+        <div class="sc-summary-strip">
+          <div class="sc-summary-item primary">
+            <div class="sc-summary-label">Do Now</div>
+            <div class="sc-summary-value" x-text="salesCoachData?.urgencyCounts?.doNow || 0"></div>
+            <div class="sc-summary-detail">Immediate outreach priorities for Ben.</div>
+          </div>
+          <div class="sc-summary-item">
+            <div class="sc-summary-label">Do Today</div>
+            <div class="sc-summary-value" x-text="salesCoachData?.urgencyCounts?.doToday || 0"></div>
+            <div class="sc-summary-detail">Important follow-up items that should be actioned today.</div>
+          </div>
+          <div class="sc-summary-item">
+            <div class="sc-summary-label">Monitor</div>
+            <div class="sc-summary-value" x-text="salesCoachData?.urgencyCounts?.monitor || 0"></div>
+            <div class="sc-summary-detail">Keep visible, but not first-call priorities.</div>
+          </div>
+          <div class="sc-summary-item">
+            <div class="sc-summary-label">Focus First</div>
+            <div class="sc-summary-detail">
+              <template x-for="(rec, idx) in (salesCoachData?.recommendations || []).slice(0, 3)" :key="idx">
+                <div style="margin-bottom:4px;">
+                  <strong x-text="rec.contactName"></strong>
+                  <span style="color:var(--text-muted);" x-text="' — ' + (rec.urgencyBucket === 'do_now' ? 'Do Now' : rec.urgencyBucket === 'do_today' ? 'Do Today' : 'Monitor')"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+      </template>
+
       <!-- Loading state -->
       <template x-if="salesCoachLoading">
         <div class="sales-coach-loading">
@@ -1734,6 +1831,8 @@
               <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
                 <span class="sc-badge" :class="rec.priority"
                   x-text="rec.priority.toUpperCase()"></span>
+                <span class="sc-urgency" :class="rec.urgencyBucket"
+                  x-text="rec.urgencyBucket === 'do_now' ? 'Do Now' : rec.urgencyBucket === 'do_today' ? 'Do Today' : 'Monitor'"></span>
                 <span class="sc-action-type" x-text="rec.actionType"></span>
                 <span class="sc-contact-name" x-text="rec.contactName"></span>
                 <template x-if="rec.contactPhone">
@@ -1784,7 +1883,7 @@
                   x-text="rec._activating ? 'Creating...' : '📞 Create Task for Ben'">
                 </button>
                 <div class="sc-activated-badge" x-show="rec.activated" x-cloak>
-                  ✅ Task Created
+                  <span x-text="rec.taskState === 'existing' ? '✅ Task Already Exists' : '✅ Task Created'"></span>
                   <a x-show="rec.taskUrl" :href="rec.taskUrl" target="_blank" rel="noopener">View Task ↗</a>
                 </div>
                 <a :href="rec.contactUrl" target="_blank" rel="noopener"
@@ -2562,6 +2661,7 @@
             rec.activated = true;
             rec.taskId = data.task?.id || null;
             rec.taskUrl = data.task?.url || null;
+            rec.taskState = data.recommendation?.taskState || 'new';
           } catch (e) {
             alert('Error: ' + (e.message || 'Could not create task'));
           }

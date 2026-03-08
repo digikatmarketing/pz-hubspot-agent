@@ -19,6 +19,7 @@ import {
 import { stageName, UI_DOMAIN, HUB_ID } from "../hubspot/types.js";
 import type { SearchFilter } from "../hubspot/types.js";
 import { toHsTimestamp } from "../reports/date-ranges.js";
+import { getFirstOpenTaskForContact, getOpenTasksByContactIds } from "./task-guard.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -42,6 +43,9 @@ export interface SalesRecommendation {
   activated: boolean;
   taskId: string | null;
   taskUrl: string | null;
+  taskState?: "new" | "existing";
+  urgencyBucket?: "do_now" | "do_today" | "monitor";
+  rankScore?: number;
 }
 
 export interface SalesRecommendationsResult {
@@ -49,6 +53,12 @@ export interface SalesRecommendationsResult {
   generatedAt: string;
   contactsAnalysed: number;
   signalsFound: number;
+  skippedExistingTasks: number;
+  urgencyCounts: {
+    doNow: number;
+    doToday: number;
+    monitor: number;
+  };
 }
 
 // ── Config ───────────────────────────────────────────────────────────
@@ -100,13 +110,90 @@ interface EnrichedContact {
   deal: { id: string; name: string | null; stage: string | null } | null;
 }
 
+function parseTimestamp(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const asNumber = Number(value);
+  if (!Number.isNaN(asNumber) && asNumber > 0) return asNumber;
+  const asDate = new Date(value).getTime();
+  return Number.isNaN(asDate) ? null : asDate;
+}
+
+function hoursSince(value: string | null | undefined): number | null {
+  const ts = parseTimestamp(value);
+  if (ts === null) return null;
+  return (Date.now() - ts) / (1000 * 60 * 60);
+}
+
+function computeUrgencyScore(rec: SalesRecommendation, contact?: EnrichedContact): number {
+  let score = 0;
+
+  score += rec.priority === "hot" ? 300 : rec.priority === "warm" ? 180 : 90;
+  score += rec.actionType === "CALL" ? 30 : rec.actionType === "EMAIL" ? 15 : 5;
+
+  const signals = new Set(contact?.signals ?? []);
+  if (signals.has("new_lead_no_contact")) score += 140;
+  if (signals.has("recent_form_submission")) score += 110;
+  if (signals.has("recent_website_visitor")) score += 70;
+  if (signals.has("clicked_sales_email")) score += 45;
+  if (signals.has("high_engagement_not_contacted")) score += 60;
+
+  if (contact?.phone) score += 20;
+  if (!contact?.properties.notes_last_contacted) score += 35;
+
+  const createdHours = hoursSince(contact?.properties.createdate);
+  if (createdHours !== null) {
+    if (createdHours <= 24) score += 70;
+    else if (createdHours <= 72) score += 35;
+  }
+
+  const visitHours = hoursSince(contact?.properties.hs_analytics_last_visit_timestamp);
+  if (visitHours !== null) {
+    if (visitHours <= 24) score += 50;
+    else if (visitHours <= 72) score += 20;
+  }
+
+  const conversionHours = hoursSince(contact?.properties.recent_conversion_date);
+  if (conversionHours !== null) {
+    if (conversionHours <= 24) score += 60;
+    else if (conversionHours <= 72) score += 25;
+  }
+
+  const dealStage = contact?.deal?.stage;
+  if (dealStage === "Lead") score += 30;
+  if (dealStage === "Meeting Booked") score -= 10;
+  if (dealStage === "Approved by Doctor") score -= 20;
+
+  return score;
+}
+
+function getUrgencyBucket(score: number): "do_now" | "do_today" | "monitor" {
+  if (score >= 420) return "do_now";
+  if (score >= 250) return "do_today";
+  return "monitor";
+}
+
+function countUrgencyBuckets(recommendations: SalesRecommendation[]) {
+  return recommendations.reduce(
+    (acc, rec) => {
+      if (rec.urgencyBucket === "do_now") acc.doNow += 1;
+      else if (rec.urgencyBucket === "do_today") acc.doToday += 1;
+      else acc.monitor += 1;
+      return acc;
+    },
+    { doNow: 0, doToday: 0, monitor: 0 },
+  );
+}
+
 function daysAgo(days: number): string {
   const d = new Date();
   d.setDate(d.getDate() - days);
   return toHsTimestamp(d);
 }
 
-async function gatherHotLeadData(): Promise<EnrichedContact[]> {
+async function gatherHotLeadData(): Promise<{
+  contacts: EnrichedContact[];
+  skippedExistingTasks: number;
+}> {
   console.log("[SALES COACH] Querying HubSpot for hot lead signals...");
 
   const sevenDaysAgo = daysAgo(7);
@@ -225,8 +312,10 @@ async function gatherHotLeadData(): Promise<EnrichedContact[]> {
   addContacts(q4.results, "clicked_sales_email");
   addContacts(q5.results, "new_lead_no_contact");
 
-  // Enrich with deal data (top 30 contacts only to limit API calls)
-  const contacts = Array.from(contactMap.values()).slice(0, 30);
+  const dedupedContacts = Array.from(contactMap.values()).slice(0, 30);
+  const openTasksByContact = await getOpenTasksByContactIds(dedupedContacts.map((contact) => contact.id));
+  const contacts = dedupedContacts.filter((contact) => !openTasksByContact.has(contact.id));
+  const skippedExistingTasks = dedupedContacts.length - contacts.length;
 
   await Promise.all(
     contacts.map(async (contact) => {
@@ -251,7 +340,7 @@ async function gatherHotLeadData(): Promise<EnrichedContact[]> {
   );
 
   console.log(`[SALES COACH] ${contacts.length} unique contacts enriched with deal data`);
-  return contacts;
+  return { contacts, skippedExistingTasks };
 }
 
 // ── Claude analysis prompt ──────────────────────────────────────────
@@ -306,7 +395,7 @@ export async function generateSalesRecommendations(): Promise<SalesRecommendatio
   console.log("[SALES COACH] Generating hot lead recommendations...");
   const startTime = Date.now();
 
-  const contacts = await gatherHotLeadData();
+  const { contacts, skippedExistingTasks } = await gatherHotLeadData();
 
   if (contacts.length === 0) {
     console.log("[SALES COACH] No contacts with engagement signals found");
@@ -315,6 +404,8 @@ export async function generateSalesRecommendations(): Promise<SalesRecommendatio
       generatedAt: new Date().toISOString(),
       contactsAnalysed: 0,
       signalsFound: 0,
+      skippedExistingTasks,
+      urgencyCounts: { doNow: 0, doToday: 0, monitor: 0 },
     };
     _cache = result;
     _cacheTime = Date.now();
@@ -391,7 +482,7 @@ export async function generateSalesRecommendations(): Promise<SalesRecommendatio
     // Enrich recommendations with contact/deal metadata from our gathered data
     const recommendations: SalesRecommendation[] = rawRecs.map((rec) => {
       const contact = contacts.find((c) => c.id === rec.contactId);
-      return {
+      const baseRec: SalesRecommendation = {
         ...rec,
         contactName: contact?.name ?? "Unknown",
         contactEmail: contact?.email ?? null,
@@ -404,13 +495,23 @@ export async function generateSalesRecommendations(): Promise<SalesRecommendatio
         taskId: null,
         taskUrl: null,
       };
-    });
+      const rankScore = computeUrgencyScore(baseRec, contact);
+      return {
+        ...baseRec,
+        rankScore,
+        urgencyBucket: getUrgencyBucket(rankScore),
+      };
+    }).sort((a, b) => (b.rankScore ?? 0) - (a.rankScore ?? 0));
+
+    const urgencyCounts = countUrgencyBuckets(recommendations);
 
     const result: SalesRecommendationsResult = {
       recommendations,
       generatedAt: new Date().toISOString(),
       contactsAnalysed: contacts.length,
       signalsFound: totalSignals,
+      skippedExistingTasks,
+      urgencyCounts,
     };
 
     _cache = result;
@@ -455,6 +556,15 @@ export async function activateRecommendation(
 
   if (rec.activated) {
     return rec; // Already activated — return existing task info
+  }
+
+  const existingTask = await getFirstOpenTaskForContact(rec.contactId);
+  if (existingTask) {
+    rec.activated = true;
+    rec.taskId = existingTask.id;
+    rec.taskUrl = existingTask.url;
+    rec.taskState = "existing";
+    return rec;
   }
 
   // Build due date: tomorrow 9am AEST
@@ -507,6 +617,7 @@ export async function activateRecommendation(
   rec.activated = true;
   rec.taskId = task.id;
   rec.taskUrl = `https://${UI_DOMAIN}/contacts/${HUB_ID}/task/${task.id}`;
+  rec.taskState = "new";
 
   console.log(
     `[SALES COACH] Task created for "${rec.contactName}" — ` +

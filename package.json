@@ -9,7 +9,10 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "check": "npm run build",
+    "deploy:railway": "bash ./scripts/deploy-clean.sh",
+    "status:railway": "railway service status"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.52.0",
