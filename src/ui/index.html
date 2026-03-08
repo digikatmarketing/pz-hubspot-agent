@@ -1,0 +1,2660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PZ HubSpot Agent</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --border: #2a2d3a;
+      --text: #e4e4e7;
+      --text-muted: #71717a;
+      --accent: #22c55e;
+      --accent-dim: #166534;
+      --user-bg: #1e3a5f;
+      --agent-bg: #1a1d27;
+      --confirm-bg: #3b2a0a;
+      --confirm-border: #f59e0b;
+      --error-bg: #3b1010;
+      --error-border: #ef4444;
+      --panel-width: 380px;
+    }
+
+    [x-cloak] { display: none !important; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    .header h1 {
+      font-size: 16px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .header h1 .pz { color: var(--accent); }
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      display: inline-block;
+    }
+    .status-dot.thinking {
+      animation: pulse 1s infinite;
+      background: #f59e0b;
+    }
+    .status-dot.disconnected { background: #ef4444; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+    .header-actions {
+      display: flex;
+      gap: 8px;
+    }
+    .header button, .header .btn {
+      background: var(--border);
+      color: var(--text-muted);
+      border: none;
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .header button:hover, .header .btn:hover { background: #3a3d4a; color: var(--text); }
+    .header .btn.active { background: var(--accent-dim); color: var(--accent); }
+
+    /* ── Pipeline Dashboard ────────────────────────────── */
+    .dashboard {
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      overflow: hidden;
+      transition: max-height 0.3s ease, padding 0.3s ease;
+      flex-shrink: 0;
+    }
+    .dashboard.collapsed {
+      max-height: 0;
+      padding: 0 20px;
+      border-bottom: none;
+    }
+    .dashboard.expanded {
+      max-height: 300px;
+      padding: 16px 20px;
+    }
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 10px;
+    }
+    .stage-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.15s, transform 0.15s;
+    }
+    .stage-card:hover {
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
+    .stage-card .count {
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--accent);
+      line-height: 1.2;
+    }
+    .stage-card .label {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .stage-card.won .count { color: #22c55e; }
+    .stage-card.lost .count { color: #ef4444; }
+    .dashboard-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 12px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .dashboard-footer .total {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .dashboard-footer button {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 12px;
+      padding: 4px 8px;
+      border-radius: 4px;
+    }
+    .dashboard-footer button:hover { background: var(--border); color: var(--text); }
+    .dashboard-loading {
+      text-align: center;
+      padding: 20px;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    /* ── Main content area ─────────────────────────────── */
+    .main-content {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* Messages */
+    .chat-area {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      transition: margin-right 0.3s ease;
+    }
+    .chat-area.panel-open {
+      margin-right: var(--panel-width);
+    }
+    .messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .msg {
+      max-width: 85%;
+      padding: 12px 16px;
+      border-radius: 12px;
+      font-size: 14px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .msg.user {
+      background: var(--user-bg);
+      align-self: flex-end;
+      border-bottom-right-radius: 4px;
+    }
+    .msg.agent {
+      background: var(--agent-bg);
+      border: 1px solid var(--border);
+      align-self: flex-start;
+      border-bottom-left-radius: 4px;
+    }
+    .msg.confirm {
+      background: var(--confirm-bg);
+      border: 1px solid var(--confirm-border);
+      align-self: flex-start;
+    }
+    .msg.error {
+      background: var(--error-bg);
+      border: 1px solid var(--error-border);
+      align-self: flex-start;
+    }
+    .msg.tool-call {
+      background: transparent;
+      border: 1px dashed var(--border);
+      align-self: flex-start;
+      color: var(--text-muted);
+      font-size: 12px;
+      padding: 6px 12px;
+    }
+
+    /* Confirm buttons */
+    .confirm-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .confirm-actions button {
+      padding: 6px 20px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .btn-approve { background: var(--accent); color: #000; }
+    .btn-approve:hover { background: #16a34a; }
+    .btn-deny { background: #3a3d4a; color: var(--text); }
+    .btn-deny:hover { background: #4a4d5a; }
+
+    /* Markdown rendering in messages */
+    .msg code {
+      background: rgba(255,255,255,0.08);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+    .msg pre {
+      background: rgba(0,0,0,0.3);
+      padding: 10px;
+      border-radius: 6px;
+      overflow-x: auto;
+      margin: 8px 0;
+      font-size: 12px;
+    }
+    .msg pre code { background: none; padding: 0; }
+    .msg a { color: var(--accent); text-decoration: none; }
+    .msg a:hover { text-decoration: underline; }
+    .msg table {
+      border-collapse: collapse;
+      margin: 8px 0;
+      font-size: 13px;
+      width: 100%;
+    }
+    .msg th, .msg td {
+      border: 1px solid var(--border);
+      padding: 6px 10px;
+      text-align: left;
+    }
+    .msg th { background: rgba(255,255,255,0.05); font-weight: 600; }
+    .msg tr:hover td { background: rgba(255,255,255,0.03); }
+
+    /* Input area */
+    .input-area {
+      padding: 16px 20px;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      display: flex;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+    .input-area input {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 14px;
+      outline: none;
+    }
+    .input-area input:focus { border-color: var(--accent); }
+    .input-area input::placeholder { color: var(--text-muted); }
+    .input-area button {
+      background: var(--accent);
+      color: #000;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .input-area button:hover { background: #16a34a; }
+    .input-area button:disabled {
+      background: var(--accent-dim);
+      cursor: not-allowed;
+    }
+
+    /* ── Quick-View Side Panel ─────────────────────────── */
+    .side-panel {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: var(--panel-width);
+      height: 100%;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      transform: translateX(100%);
+      transition: transform 0.3s ease;
+      display: flex;
+      flex-direction: column;
+      z-index: 10;
+    }
+    .side-panel.open {
+      transform: translateX(0);
+    }
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .panel-header h3 {
+      font-size: 14px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .panel-header .type-badge {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: var(--accent-dim);
+      color: var(--accent);
+    }
+    .panel-header button {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 20px;
+      padding: 4px 10px;
+      border-radius: 4px;
+      line-height: 1;
+    }
+    .panel-header button:hover { background: var(--border); color: var(--text); }
+    .panel-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+    }
+    .panel-section {
+      margin-bottom: 20px;
+    }
+    .panel-section h4 {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+      padding-bottom: 4px;
+      border-bottom: 1px solid var(--border);
+    }
+    .prop-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 5px 0;
+      font-size: 13px;
+      border-bottom: 1px solid rgba(255,255,255,0.03);
+    }
+    .prop-row:last-child { border-bottom: none; }
+    .prop-key {
+      color: var(--text-muted);
+      flex-shrink: 0;
+      margin-right: 12px;
+    }
+    .prop-val {
+      color: var(--text);
+      text-align: right;
+      word-break: break-all;
+    }
+    .prop-val.stage-badge {
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .assoc-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .assoc-item {
+      font-size: 12px;
+      padding: 4px 8px;
+      background: var(--bg);
+      border-radius: 4px;
+      cursor: pointer;
+      color: var(--accent);
+      border: 1px solid var(--border);
+      transition: border-color 0.15s;
+    }
+    .assoc-item:hover { border-color: var(--accent); }
+    .panel-link {
+      display: block;
+      text-align: center;
+      padding: 10px;
+      margin-top: 8px;
+      background: var(--bg);
+      color: var(--accent);
+      border-radius: 6px;
+      text-decoration: none;
+      font-size: 13px;
+      border: 1px solid var(--border);
+    }
+    .panel-link:hover { border-color: var(--accent); background: rgba(34,197,94,0.05); }
+    .panel-loading {
+      text-align: center;
+      padding: 40px 20px;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+    .panel-error {
+      text-align: center;
+      padding: 20px;
+      color: var(--error-border);
+      font-size: 13px;
+    }
+
+    /* ── Reports View ─────────────────────────────────── */
+    .reports-view {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .reports-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+      gap: 12px;
+    }
+    .report-tabs {
+      display: flex;
+      gap: 4px;
+    }
+    .report-tabs button {
+      background: transparent;
+      color: var(--text-muted);
+      border: none;
+      padding: 6px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+    .report-tabs button:hover { background: var(--border); color: var(--text); }
+    .report-tabs button.active {
+      background: var(--accent-dim);
+      color: var(--accent);
+    }
+    .date-range-pills { display: flex; gap: 4px; }
+    .date-pill {
+      background: transparent;
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      padding: 4px 12px;
+      border-radius: 16px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+    .date-pill:hover { border-color: var(--accent); color: var(--text); }
+    .date-pill.active {
+      background: var(--accent-dim);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    /* Summary KPI row */
+    .summary-row {
+      display: flex;
+      gap: 12px;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .summary-kpi {
+      flex: 1;
+      text-align: center;
+      padding: 10px 8px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .summary-kpi-value { font-size: 22px; font-weight: 700; color: var(--accent); }
+    .summary-kpi-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+
+    /* CSV export button */
+    .export-btn {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 2px 8px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.15s;
+      margin-left: 6px;
+    }
+    .export-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+    .reports-grid {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 16px;
+      align-content: start;
+    }
+
+    .report-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .report-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px 8px;
+    }
+    .report-card-header h3 {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .report-card-header .chart-type {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      padding: 2px 6px;
+      background: var(--bg);
+      border-radius: 3px;
+    }
+    .report-card-body {
+      padding: 8px 16px 16px;
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 200px;
+    }
+    .report-card-body canvas {
+      max-height: 220px;
+    }
+
+    /* KPI cards */
+    .kpi-display {
+      text-align: center;
+      padding: 20px;
+    }
+    .kpi-value {
+      font-size: 36px;
+      font-weight: 700;
+      color: var(--accent);
+      line-height: 1.2;
+    }
+    .kpi-delta {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-top: 6px;
+    }
+
+    /* Funnel chart */
+    .funnel-chart {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 8px 0;
+    }
+    .funnel-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 12px;
+    }
+    .funnel-bar .funnel-label {
+      width: 120px;
+      text-align: right;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+    .funnel-bar .funnel-fill {
+      height: 24px;
+      background: var(--accent);
+      border-radius: 4px;
+      transition: width 0.5s ease;
+      min-width: 2px;
+    }
+    .funnel-bar .funnel-count {
+      color: var(--text);
+      font-weight: 500;
+      flex-shrink: 0;
+    }
+
+    /* Table display for reports */
+    .report-table-wrapper {
+      overflow-x: auto;
+      max-height: 280px;
+      overflow-y: auto;
+    }
+    .report-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .report-table th {
+      text-align: left;
+      padding: 6px 10px;
+      border-bottom: 1px solid var(--border);
+      color: var(--text-muted);
+      font-weight: 500;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      position: sticky;
+      top: 0;
+      background: var(--surface);
+    }
+    .report-table td {
+      padding: 6px 10px;
+      border-bottom: 1px solid rgba(42, 45, 58, 0.5);
+      color: var(--text);
+    }
+    .report-table tbody tr:hover {
+      background: rgba(74, 222, 128, 0.04);
+    }
+    .report-table td:last-child,
+    .report-table th:last-child {
+      text-align: right;
+    }
+    .report-table td:first-child {
+      color: var(--text-muted);
+      width: 32px;
+    }
+
+    .report-loading {
+      color: var(--text-muted);
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .report-loading .spinner {
+      width: 16px; height: 16px;
+      border: 2px solid var(--border);
+      border-top: 2px solid var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .report-error {
+      color: var(--error-border);
+      font-size: 12px;
+      text-align: center;
+    }
+
+    /* ── Actions View ──────────────────────────────── */
+    .actions-view {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .actions-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    .actions-toolbar h2 {
+      font-size: 15px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .actions-toolbar .updated-label {
+      font-size: 12px;
+      color: var(--text-muted);
+      font-weight: 400;
+    }
+    .actions-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .action-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 20px;
+    }
+    .action-card.priority-critical { border-left-color: #ef4444; }
+    .action-card.priority-high { border-left-color: #f59e0b; }
+    .action-card.priority-medium { border-left-color: #3b82f6; }
+    .action-card.priority-low { border-left-color: #6b7280; }
+    .action-card-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .action-priority {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      color: #fff;
+    }
+    .action-priority.critical { background: #ef4444; }
+    .action-priority.high { background: #f59e0b; color: #000; }
+    .action-priority.medium { background: #3b82f6; }
+    .action-priority.low { background: #6b7280; }
+    .action-category {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      background: var(--bg);
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+    }
+    .action-card-header h3 {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+      flex: 1;
+    }
+    .action-problem {
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.5;
+      margin-bottom: 10px;
+    }
+    .action-recommendation {
+      background: rgba(34, 197, 94, 0.08);
+      border: 1px solid rgba(34, 197, 94, 0.2);
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin-bottom: 10px;
+    }
+    .action-recommendation-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--accent);
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .action-recommendation-text {
+      font-size: 13px;
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .action-impact {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+      font-style: italic;
+    }
+    .action-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .action-data-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .action-data-tag {
+      font-size: 11px;
+      padding: 2px 8px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text-muted);
+    }
+    .action-discuss-btn {
+      background: var(--border);
+      color: var(--text-muted);
+      border: none;
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+      white-space: nowrap;
+      transition: all 0.15s;
+    }
+    .action-discuss-btn:hover {
+      background: var(--accent-dim);
+      color: var(--accent);
+    }
+    .actions-loading {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 80px 20px;
+      gap: 16px;
+    }
+    .actions-loading .spinner {
+      width: 24px; height: 24px;
+      border: 3px solid var(--border);
+      border-top: 3px solid var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    .actions-loading span {
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+    .actions-pending {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 80px 20px;
+      gap: 12px;
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+    .actions-pending button {
+      background: var(--border);
+      color: var(--text-muted);
+      border: none;
+      padding: 8px 20px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .actions-pending button:hover { background: #3a3d4a; color: var(--text); }
+
+    /* Sales Coach view */
+    .sales-coach-view {
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      height: 100%;
+      padding: 16px 20px;
+    }
+    .sales-coach-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      flex-shrink: 0;
+    }
+    .sales-coach-toolbar h2 {
+      font-size: 16px;
+      font-weight: 600;
+      margin: 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .sales-coach-toolbar .sc-meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-weight: 400;
+    }
+    .sc-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--border);
+      border-radius: 8px;
+      padding: 16px 18px;
+      margin-bottom: 14px;
+    }
+    .sc-card.priority-hot { border-left-color: #ef4444; }
+    .sc-card.priority-warm { border-left-color: #f59e0b; }
+    .sc-card.priority-follow-up { border-left-color: #3b82f6; }
+
+    .sc-card-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .sc-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #fff;
+    }
+    .sc-badge.hot { background: #ef4444; }
+    .sc-badge.warm { background: #f59e0b; color: #000; }
+    .sc-badge.follow-up { background: #3b82f6; }
+
+    .sc-action-type {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      background: rgba(255,255,255,0.06);
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+    }
+    .sc-contact-name {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .sc-contact-link {
+      font-size: 11px;
+      color: var(--accent);
+      text-decoration: none;
+      margin-left: auto;
+    }
+    .sc-contact-link:hover { text-decoration: underline; }
+
+    .sc-section {
+      margin-bottom: 12px;
+    }
+    .sc-section-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+    }
+
+    .sc-signal {
+      background: rgba(239, 68, 68, 0.06);
+      border: 1px solid rgba(239, 68, 68, 0.15);
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-size: 13px;
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .sc-playbook {
+      font-size: 13px;
+      color: var(--text);
+      line-height: 1.6;
+    }
+    .sc-talking-points {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    .sc-talking-points li {
+      font-size: 13px;
+      color: var(--text);
+      padding: 3px 0 3px 16px;
+      position: relative;
+      line-height: 1.5;
+    }
+    .sc-talking-points li::before {
+      content: "•";
+      position: absolute;
+      left: 0;
+      color: var(--accent);
+      font-weight: bold;
+    }
+    .sc-copy-box {
+      background: rgba(34, 197, 94, 0.06);
+      border: 1px solid rgba(34, 197, 94, 0.2);
+      border-radius: 6px;
+      padding: 12px 14px;
+      font-size: 13px;
+      color: var(--text);
+      line-height: 1.6;
+      white-space: pre-wrap;
+      position: relative;
+      font-family: inherit;
+    }
+    .sc-copy-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      padding: 3px 10px;
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .sc-copy-btn:hover { background: rgba(255,255,255,0.15); color: var(--text); }
+
+    .sc-card-footer {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 14px;
+      flex-wrap: wrap;
+    }
+    .sc-activate-btn {
+      background: #22c55e;
+      color: #000;
+      border: none;
+      padding: 8px 18px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .sc-activate-btn:hover { background: #16a34a; }
+    .sc-activate-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .sc-activated-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: #22c55e;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .sc-activated-badge a {
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 400;
+      font-size: 12px;
+    }
+    .sc-activated-badge a:hover { text-decoration: underline; }
+
+    .sc-deal-tag {
+      font-size: 11px;
+      color: var(--text-muted);
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border);
+      padding: 2px 8px;
+      border-radius: 4px;
+      margin-left: auto;
+    }
+
+    /* Auto-Pilot bar */
+    .autopilot-bar {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 10px 16px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .autopilot-bar .ap-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .autopilot-bar .ap-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .autopilot-bar .ap-dot.on { background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,0.5); }
+    .autopilot-bar .ap-dot.off { background: #6b7280; }
+    .autopilot-bar .ap-meta {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .autopilot-bar .ap-toggle {
+      padding: 4px 14px;
+      border-radius: 5px;
+      border: 1px solid var(--border);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-left: auto;
+    }
+    .autopilot-bar .ap-toggle.start { background: #22c55e; color: #000; border-color: #22c55e; }
+    .autopilot-bar .ap-toggle.stop { background: rgba(239,68,68,0.15); color: #ef4444; border-color: rgba(239,68,68,0.3); }
+    .autopilot-bar .ap-toggle:hover { opacity: 0.85; }
+    .ap-tasks-feed {
+      width: 100%;
+      margin-top: 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .ap-task-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text-muted);
+      padding: 3px 0;
+    }
+    .ap-task-item .ap-task-time {
+      color: var(--text-muted);
+      min-width: 55px;
+    }
+    .ap-task-item .ap-task-name {
+      color: var(--text);
+      font-weight: 500;
+    }
+    .ap-task-item a {
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 11px;
+    }
+
+    .sales-coach-loading, .sales-coach-empty {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 60px 20px;
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+
+    /* Login overlay */
+    .login-overlay {
+      position: fixed;
+      inset: 0;
+      background: var(--bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+    }
+    .login-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 40px;
+      width: 380px;
+      max-width: 90vw;
+      text-align: center;
+    }
+    .login-card h2 {
+      font-size: 20px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .login-card h2 .pz { color: var(--accent); }
+    .login-card .subtitle {
+      color: var(--text-muted);
+      font-size: 13px;
+      margin-bottom: 24px;
+    }
+    .login-card input[type="password"] {
+      width: 100%;
+      padding: 10px 14px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 14px;
+      outline: none;
+      margin-bottom: 12px;
+    }
+    .login-card input[type="password"]:focus {
+      border-color: var(--accent);
+    }
+    .login-card .login-btn {
+      width: 100%;
+      padding: 10px;
+      background: var(--accent);
+      color: #000;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .login-card .login-btn:hover { opacity: 0.9; }
+    .login-card .login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .login-error {
+      color: #ef4444;
+      font-size: 13px;
+      margin-bottom: 12px;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .side-panel { width: 100%; }
+      .chat-area.panel-open { margin-right: 0; }
+      .dashboard-grid { grid-template-columns: repeat(4, 1fr); }
+      .reports-grid { grid-template-columns: 1fr; }
+      .reports-toolbar { flex-wrap: wrap; }
+    }
+  </style>
+</head>
+<body x-data="chat()" x-init="checkAuth()">
+
+  <!-- Login gate -->
+  <div class="login-overlay" x-show="!authenticated" x-cloak>
+    <div class="login-card">
+      <h2><span class="pz">PZ</span> HubSpot Agent</h2>
+      <p class="subtitle">Enter password to continue</p>
+      <div class="login-error" x-show="loginError" x-text="loginError"></div>
+      <form @submit.prevent="login()">
+        <input
+          type="password"
+          x-model="loginPassword"
+          placeholder="Password"
+          :disabled="loginLoading"
+          x-ref="passwordInput"
+        >
+        <button type="submit" class="login-btn" :disabled="loginLoading || !loginPassword.trim()">
+          <span x-show="!loginLoading">Sign In</span>
+          <span x-show="loginLoading">Signing in...</span>
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Header -->
+  <div class="header" x-show="authenticated" x-cloak>
+    <h1>
+      <span class="status-dot"
+        :class="{ thinking: status === 'thinking', disconnected: status === 'disconnected' }">
+      </span>
+      <span class="pz">PZ</span> HubSpot Agent
+    </h1>
+    <div class="header-actions">
+      <button :class="{ active: activeView === 'chat' }" @click="switchView('chat')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        Chat
+      </button>
+      <button :class="{ active: dashboardOpen }" @click="toggleDashboard()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        Pipeline
+      </button>
+      <button :class="{ active: activeView === 'reports' }" @click="switchView('reports')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
+        Reports
+      </button>
+      <button :class="{ active: activeView === 'actions' }" @click="switchView('actions')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        Actions
+      </button>
+      <button :class="{ active: activeView === 'sales-coach' }" @click="switchView('sales-coach')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        Sales Coach
+      </button>
+      <button @click="newSession()">New Chat</button>
+      <button @click="logout()" style="color:#ef4444;">Logout</button>
+    </div>
+  </div>
+
+  <!-- Pipeline Dashboard -->
+  <div class="dashboard" x-show="authenticated" x-cloak :class="dashboardOpen ? 'expanded' : 'collapsed'">
+    <template x-if="dashboardLoading">
+      <div class="dashboard-loading">Loading pipeline stats...</div>
+    </template>
+    <template x-if="!dashboardLoading && dashboardStats">
+      <div>
+        <div class="dashboard-grid">
+          <template x-for="stage in dashboardStats.stages" :key="stage.id">
+            <div class="stage-card"
+              :class="{ won: stage.label === 'Approved by Doctor', lost: stage.label === 'Cancelled' }"
+              @click="askAboutStage(stage.label)">
+              <div class="count" x-text="stage.count.toLocaleString()"></div>
+              <div class="label" x-text="stage.label"></div>
+            </div>
+          </template>
+        </div>
+        <div class="dashboard-footer">
+          <span>
+            <span class="total" x-text="dashboardStats.total.toLocaleString()"></span> total deals
+          </span>
+          <span x-text="'Updated ' + timeAgo(dashboardStats.timestamp)"></span>
+          <button @click="loadDashboard()">Refresh</button>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <!-- Main content: chat + side panel + reports -->
+  <div class="main-content" x-show="authenticated" x-cloak>
+    <!-- Chat area -->
+    <div class="chat-area" :class="{ 'panel-open': panelOpen }" x-show="activeView === 'chat'">
+      <div class="messages" x-ref="messages" @click.capture="handleChatClick($event)">
+        <template x-for="(msg, i) in messages" :key="i">
+          <div>
+            <!-- User message -->
+            <div class="msg user" x-show="msg.type === 'user'" x-text="msg.content"></div>
+
+            <!-- Agent text -->
+            <div class="msg agent" x-show="msg.type === 'text'" x-html="renderMarkdown(msg.content)"></div>
+
+            <!-- Tool call -->
+            <div class="msg tool-call" x-show="msg.type === 'tool_call'" x-text="msg.content"></div>
+
+            <!-- Confirm request -->
+            <div class="msg confirm" x-show="msg.type === 'confirm_request'">
+              <div x-html="renderMarkdown(msg.content)"></div>
+              <div class="confirm-actions" x-show="msg.pending">
+                <button class="btn-approve" @click="confirm(true, i)">Approve</button>
+                <button class="btn-deny" @click="confirm(false, i)">Deny</button>
+              </div>
+              <div x-show="!msg.pending && msg.approved" style="margin-top:8px;color:#22c55e;font-size:12px;">Approved</div>
+              <div x-show="!msg.pending && !msg.approved" style="margin-top:8px;color:#ef4444;font-size:12px;">Denied</div>
+            </div>
+
+            <!-- Error -->
+            <div class="msg error" x-show="msg.type === 'error'" x-text="msg.content"></div>
+          </div>
+        </template>
+      </div>
+
+      <!-- Input -->
+      <div class="input-area">
+        <input
+          type="text"
+          x-model="input"
+          @keydown.enter="send()"
+          placeholder="Ask about contacts, deals, prescriptions..."
+          :disabled="status === 'thinking' || status === 'disconnected'"
+        >
+        <button @click="send()" :disabled="!input.trim() || status === 'thinking'">Send</button>
+      </div>
+    </div>
+
+    <!-- Quick-View Side Panel -->
+    <div class="side-panel" :class="{ open: panelOpen }">
+      <div class="panel-header">
+        <h3>
+          <span class="type-badge" x-text="panelData?.objectType ?? ''"></span>
+          <span x-text="panelData?.title ?? 'Quick View'"></span>
+        </h3>
+        <button @click="closePanel()">&times;</button>
+      </div>
+      <div class="panel-body">
+        <!-- Loading -->
+        <template x-if="panelLoading">
+          <div class="panel-loading">Loading details...</div>
+        </template>
+
+        <!-- Error -->
+        <template x-if="panelError">
+          <div class="panel-error" x-text="panelError"></div>
+        </template>
+
+        <!-- Data -->
+        <template x-if="panelData && !panelLoading">
+          <div>
+            <!-- Properties -->
+            <div class="panel-section">
+              <h4>Properties</h4>
+              <template x-for="[key, val] in panelData.displayProps" :key="key">
+                <div class="prop-row">
+                  <span class="prop-key" x-text="key"></span>
+                  <span class="prop-val" :class="{ 'stage-badge': key === 'Stage' }" x-text="val || '—'"></span>
+                </div>
+              </template>
+            </div>
+
+            <!-- Associations -->
+            <template x-if="panelData.associations && Object.keys(panelData.associations).length > 0">
+              <div class="panel-section">
+                <h4>Associations</h4>
+                <template x-for="[assocType, ids] in Object.entries(panelData.associations)" :key="assocType">
+                  <div style="margin-bottom: 8px;">
+                    <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;" x-text="assocType + ' (' + ids.length + ')'"></div>
+                    <div class="assoc-list">
+                      <template x-for="id in ids.slice(0, 10)" :key="id">
+                        <div class="assoc-item" @click="openPanel(assocType === 'lineItems' ? 'line_items' : assocType, id)" x-text="assocType.replace(/s$/, '') + ' #' + id"></div>
+                      </template>
+                      <div x-show="ids.length > 10" style="font-size:11px;color:var(--text-muted);padding:4px;">
+                        + <span x-text="ids.length - 10"></span> more
+                      </div>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </template>
+
+            <!-- HubSpot link -->
+            <a class="panel-link" :href="panelData.url" target="_blank" rel="noopener">
+              Open in HubSpot &rarr;
+            </a>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- Reports View -->
+    <div class="reports-view" x-show="activeView === 'reports'">
+      <div class="reports-toolbar">
+        <div class="report-tabs">
+          <button :class="{ active: reportDashboard === 'executive' }"
+            @click="switchReportDashboard('executive')">Executive</button>
+          <button :class="{ active: reportDashboard === 'operations' }"
+            @click="switchReportDashboard('operations')">Operations</button>
+          <button :class="{ active: reportDashboard === 'prescriptions' }"
+            @click="switchReportDashboard('prescriptions')">Prescriptions</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div class="date-range-pills">
+            <template x-for="opt in dateRangeOptions" :key="opt.key">
+              <button class="date-pill"
+                :class="{ active: reportDateRange === opt.key }"
+                @click="reportDateRange = opt.key; loadReports()"
+                x-text="opt.short">
+              </button>
+            </template>
+          </div>
+          <button class="header button" style="background:var(--border);color:var(--text-muted);border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;"
+            @click="refreshReports()">Refresh</button>
+        </div>
+      </div>
+
+      <!-- Summary KPI row -->
+      <div class="summary-row" x-show="summaryKPIs.length > 0">
+        <template x-for="kpi in summaryKPIs" :key="kpi.label">
+          <div class="summary-kpi">
+            <div class="summary-kpi-value" x-text="kpi.value"></div>
+            <div class="summary-kpi-label" x-text="kpi.label"></div>
+          </div>
+        </template>
+      </div>
+
+      <!-- Loading -->
+      <template x-if="reportsLoading">
+        <div class="reports-grid">
+          <div style="grid-column:1/-1;text-align:center;padding:60px 20px;">
+            <div class="report-loading" style="justify-content:center;">
+              <div class="spinner"></div>
+              <span>Loading reports...</span>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <!-- Error -->
+      <template x-if="reportsError && !reportsLoading">
+        <div class="reports-grid">
+          <div style="grid-column:1/-1;text-align:center;padding:60px 20px;">
+            <div class="report-error" x-text="reportsError"></div>
+          </div>
+        </div>
+      </template>
+
+      <!-- Report cards — use x-if with a single root div wrapping x-for -->
+      <template x-if="!reportsLoading && !reportsError && reportResults.length > 0">
+        <div class="reports-grid">
+          <template x-for="report in reportResults" :key="report.reportId">
+            <div class="report-card">
+              <div class="report-card-header">
+                <h3 x-text="report.title"></h3>
+                <div style="display:flex;align-items:center;">
+                  <span class="chart-type" x-text="report.chartType"></span>
+                  <button class="export-btn" x-show="!report._loading" @click="exportCSV(report)" title="Export CSV">CSV</button>
+                </div>
+              </div>
+              <div class="report-card-body">
+                <!-- Loading placeholder -->
+                <template x-if="report._loading">
+                  <div class="report-loading" style="justify-content:center;padding:60px 0;">
+                    <div class="spinner"></div>
+                    <span style="color:var(--text-muted);font-size:13px;">Loading...</span>
+                  </div>
+                </template>
+
+                <!-- KPI display -->
+                <template x-if="!report._loading && report.chartType === 'kpi'">
+                  <div class="kpi-display">
+                    <div class="kpi-value" x-text="report.data.kpiValue"></div>
+                    <div class="kpi-delta" x-text="report.data.kpiDelta"></div>
+                  </div>
+                </template>
+
+                <!-- Funnel display -->
+                <template x-if="!report._loading && report.chartType === 'funnel'">
+                  <div class="funnel-chart">
+                    <template x-for="(label, idx) in report.data.labels" :key="label">
+                      <div class="funnel-bar">
+                        <span class="funnel-label" x-text="label"></span>
+                        <div class="funnel-fill" :style="'width:' + funnelWidth(report.data.values, idx) + '%'"></div>
+                        <span class="funnel-count" x-text="report.data.values[idx].toLocaleString()"></span>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+
+                <!-- Chart.js canvas (bar, line, doughnut) -->
+                <template x-if="!report._loading && ['bar','line','doughnut'].includes(report.chartType)">
+                  <div style="width:100%;height:220px;">
+                    <canvas :id="'chart-' + report.reportId"
+                      style="width:100%;height:100%;"></canvas>
+                  </div>
+                </template>
+
+                <!-- Table display -->
+                <template x-if="!report._loading && report.chartType === 'table'">
+                  <div class="report-table-wrapper">
+                    <table class="report-table">
+                      <thead>
+                        <tr>
+                          <template x-for="col in Object.keys(report.data.rows?.[0] || {})" :key="col">
+                            <th x-text="col"></th>
+                          </template>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <template x-for="(row, idx) in (report.data.rows || [])" :key="idx">
+                          <tr>
+                            <template x-for="col in Object.keys(report.data.rows?.[0] || {})" :key="col">
+                              <td x-text="typeof row[col] === 'number' ? row[col].toLocaleString() : row[col]"></td>
+                            </template>
+                          </tr>
+                        </template>
+                      </tbody>
+                    </table>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+    </div>
+
+    <!-- Actions View -->
+    <div class="actions-view" x-show="activeView === 'actions'">
+      <div class="actions-toolbar">
+        <h2>
+          AI Recommended Actions
+          <span class="updated-label" x-show="actionsData" x-text="'Updated ' + timeAgo(actionsData?.generatedAt)"></span>
+        </h2>
+        <button class="header button" style="background:var(--border);color:var(--text-muted);border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;"
+          @click="loadActions(true)">Regenerate</button>
+      </div>
+
+      <!-- Loading state -->
+      <template x-if="actionsLoading">
+        <div class="actions-loading">
+          <div class="spinner"></div>
+          <span>Loading AI recommendations...</span>
+        </div>
+      </template>
+
+      <!-- Pending state -->
+      <template x-if="!actionsLoading && actionsPending">
+        <div class="actions-pending">
+          <div class="spinner" style="margin-bottom:10px;"></div>
+          <span>Generating recommendations from report data... This may take 15–30 seconds.</span>
+          <span style="font-size:12px;color:var(--text-muted);margin-top:6px;">Auto-refreshing every 10 seconds</span>
+        </div>
+      </template>
+
+      <!-- Action cards -->
+      <template x-if="!actionsLoading && !actionsPending && actionsData">
+        <div class="actions-list">
+          <template x-for="action in actionsData.recommendations" :key="action.id">
+            <div class="action-card" :class="'priority-' + action.priority">
+              <div class="action-card-header">
+                <span class="action-priority" :class="action.priority" x-text="action.priority"></span>
+                <span class="action-category" x-text="action.category"></span>
+                <h3 x-text="action.title"></h3>
+              </div>
+              <div class="action-problem" x-text="action.problem"></div>
+              <div class="action-recommendation">
+                <div class="action-recommendation-label">Recommended Action</div>
+                <div class="action-recommendation-text" x-text="action.action"></div>
+              </div>
+              <div class="action-impact" x-text="'Impact: ' + action.impact"></div>
+              <div class="action-footer">
+                <div class="action-data-tags">
+                  <template x-for="tag in action.supportingData" :key="tag">
+                    <span class="action-data-tag" x-text="tag"></span>
+                  </template>
+                </div>
+                <button class="action-discuss-btn" @click="discussAction(action)">Discuss in Chat</button>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+    </div>
+
+    <!-- Sales Coach View -->
+    <div class="sales-coach-view" x-show="activeView === 'sales-coach'">
+      <div class="sales-coach-toolbar">
+        <h2>
+          Sales Coach — Hot Lead Recommendations
+          <span class="updated-label" x-show="salesCoachData" x-text="'Updated ' + timeAgo(salesCoachData?.generatedAt)"></span>
+        </h2>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span x-show="salesCoachData" style="font-size:12px;color:var(--text-muted);"
+            x-text="(salesCoachData?.contactsAnalysed || 0) + ' contacts analysed · ' + (salesCoachData?.signalsFound || 0) + ' signals'"></span>
+          <button class="header button" style="background:var(--border);color:var(--text-muted);border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;"
+            @click="refreshSalesCoach()">Refresh</button>
+        </div>
+      </div>
+
+      <!-- Auto-Pilot control bar -->
+      <div class="autopilot-bar" x-show="autopilotStatus">
+        <div class="ap-label">
+          <span class="ap-dot" :class="autopilotStatus?.enabled ? 'on' : 'off'"></span>
+          Auto-Pilot
+        </div>
+        <span class="ap-meta" x-show="autopilotStatus?.enabled"
+          x-text="'Every ' + (autopilotStatus?.intervalMinutes || 15) + ' min · ' + (autopilotStatus?.totalTasksCreated || 0) + ' tasks created'"></span>
+        <span class="ap-meta" x-show="autopilotStatus?.lastRun"
+          x-text="'Last scan: ' + timeAgo(autopilotStatus?.lastRun?.timestamp)"></span>
+        <button class="ap-toggle start"
+          x-show="!autopilotStatus?.enabled"
+          @click="toggleAutopilot(true)">Start</button>
+        <button class="ap-toggle stop"
+          x-show="autopilotStatus?.enabled"
+          @click="toggleAutopilot(false)">Stop</button>
+        <!-- Recent auto-created tasks feed -->
+        <div class="ap-tasks-feed" x-show="autopilotStatus?.recentTasks?.length > 0">
+          <template x-for="t in (autopilotStatus?.recentTasks || []).slice(0, 5)" :key="t.taskId">
+            <div class="ap-task-item">
+              <span class="ap-task-time" x-text="timeAgo(t.timestamp)"></span>
+              <span>✅</span>
+              <span class="ap-task-name" x-text="t.contactName"></span>
+              <span x-text="'— ' + t.actionType"></span>
+              <a :href="t.taskUrl" target="_blank" rel="noopener">View Task ↗</a>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- Loading state -->
+      <template x-if="salesCoachLoading">
+        <div class="sales-coach-loading">
+          <div class="spinner"></div>
+          <span>Analysing contacts and engagement signals...</span>
+        </div>
+      </template>
+
+      <!-- Error state -->
+      <template x-if="salesCoachError && !salesCoachLoading">
+        <div style="text-align:center;padding:40px 20px;">
+          <div style="color:#ef4444;font-size:14px;" x-text="salesCoachError"></div>
+          <button style="margin-top:12px;background:var(--border);color:var(--text);border:none;padding:8px 16px;border-radius:6px;cursor:pointer;"
+            @click="loadSalesCoach()">Retry</button>
+        </div>
+      </template>
+
+      <!-- Empty state -->
+      <template x-if="!salesCoachLoading && !salesCoachError && salesCoachData && salesCoachData.recommendations.length === 0">
+        <div class="sales-coach-empty">
+          <div style="font-size:32px;margin-bottom:12px;">🎯</div>
+          <div>No hot leads detected right now. Check back later or hit Refresh.</div>
+        </div>
+      </template>
+
+      <!-- Recommendation cards -->
+      <template x-if="!salesCoachLoading && !salesCoachError && salesCoachData && salesCoachData.recommendations.length > 0">
+        <div style="display:flex;flex-direction:column;gap:16px;padding:0 0 20px;">
+          <template x-for="(rec, idx) in salesCoachData.recommendations" :key="idx">
+            <div class="sc-card" :class="'priority-' + rec.priority">
+              <!-- Header row -->
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+                <span class="sc-badge" :class="rec.priority"
+                  x-text="rec.priority.toUpperCase()"></span>
+                <span class="sc-action-type" x-text="rec.actionType"></span>
+                <span class="sc-contact-name" x-text="rec.contactName"></span>
+                <template x-if="rec.contactPhone">
+                  <span style="font-size:12px;color:var(--text-muted);" x-text="rec.contactPhone"></span>
+                </template>
+                <template x-if="rec.dealName">
+                  <span class="sc-deal-tag" x-text="rec.dealStage + ' · ' + rec.dealName"></span>
+                </template>
+              </div>
+
+              <!-- Signal -->
+              <div class="sc-section">
+                <div class="sc-section-label">📡 Signal</div>
+                <div class="sc-signal" x-text="rec.signal"></div>
+              </div>
+
+              <!-- Playbook -->
+              <div class="sc-section">
+                <div class="sc-section-label">📋 Playbook</div>
+                <div class="sc-playbook" x-text="rec.playbook"></div>
+              </div>
+
+              <!-- Talking Points -->
+              <div class="sc-section">
+                <div class="sc-section-label">💬 Talking Points</div>
+                <ul class="sc-talking-points">
+                  <template x-for="(pt, ptIdx) in rec.talkingPoints" :key="ptIdx">
+                    <li x-text="pt"></li>
+                  </template>
+                </ul>
+              </div>
+
+              <!-- Copy Example -->
+              <div class="sc-section">
+                <div class="sc-section-label">📝 Example Script / Copy</div>
+                <div class="sc-copy-box">
+                  <span x-text="rec.copyExample"></span>
+                  <button class="sc-copy-btn" @click="copyCopyExample(rec.copyExample, $event)">Copy</button>
+                </div>
+              </div>
+
+              <!-- Footer: activate or activated state -->
+              <div class="sc-card-footer">
+                <button class="sc-activate-btn"
+                  x-show="!rec.activated"
+                  @click="activateRecommendation(idx)"
+                  :disabled="rec._activating"
+                  x-text="rec._activating ? 'Creating...' : '📞 Create Task for Ben'">
+                </button>
+                <div class="sc-activated-badge" x-show="rec.activated" x-cloak>
+                  ✅ Task Created
+                  <a x-show="rec.taskUrl" :href="rec.taskUrl" target="_blank" rel="noopener">View Task ↗</a>
+                </div>
+                <a :href="rec.contactUrl" target="_blank" rel="noopener"
+                  style="font-size:12px;color:var(--accent);text-decoration:none;margin-left:auto;">View Contact ↗</a>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <script>
+    // Chart instances stored OUTSIDE Alpine to avoid Proxy wrapping
+    const _chartInstances = {};
+
+    function chat() {
+      return {
+        ws: null,
+        status: 'disconnected',
+        messages: [],
+        input: '',
+        sessionId: null,
+
+        // Auth state
+        authenticated: false,
+        authToken: null,
+        loginPassword: '',
+        loginError: '',
+        loginLoading: false,
+
+        // View state
+        activeView: 'chat',   // 'chat', 'reports', 'actions', or 'sales-coach'
+
+        // Actions state
+        actionsLoading: false,
+        actionsPending: false,
+        actionsData: null,
+        _actionsPollTimer: null,
+
+        // Sales Coach state
+        salesCoachData: null,
+        salesCoachLoading: false,
+        salesCoachError: null,
+
+        // Auto-Pilot state
+        autopilotStatus: null,
+
+        // Dashboard state
+        dashboardOpen: false,
+        dashboardLoading: false,
+        dashboardStats: null,
+
+        // Reports state
+        reportDashboard: 'executive',
+        reportDateRange: 'last_30',
+        reportsLoading: false,
+        reportsError: null,
+        reportResults: [],
+        summaryKPIs: [],
+        dateRangeOptions: [
+          { key: 'mtd',     short: 'MTD' },
+          { key: 'ytd',     short: 'YTD' },
+          { key: 'ltm',     short: '12M' },
+          { key: 'last_30', short: '30D' },
+          { key: 'last_90', short: '90D' },
+        ],
+
+        // Side panel state
+        panelOpen: false,
+        panelLoading: false,
+        panelError: null,
+        panelData: null,
+
+        async checkAuth() {
+          try {
+            const res = await fetch('/api/auth/check');
+            const data = await res.json();
+            if (data.authenticated) {
+              this.authenticated = true;
+              this.connect();
+            } else {
+              this.$nextTick(() => this.$refs.passwordInput?.focus());
+            }
+          } catch {
+            // Server unreachable — show login
+            this.$nextTick(() => this.$refs.passwordInput?.focus());
+          }
+        },
+
+        async login() {
+          this.loginError = '';
+          this.loginLoading = true;
+          try {
+            const res = await fetch('/api/auth/login', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ password: this.loginPassword }),
+            });
+            const data = await res.json();
+            if (res.ok && data.ok) {
+              this.authToken = data.token;
+              this.authenticated = true;
+              this.loginPassword = '';
+              this.connect();
+            } else {
+              this.loginError = data.error || 'Invalid password';
+            }
+          } catch {
+            this.loginError = 'Unable to connect to server';
+          } finally {
+            this.loginLoading = false;
+          }
+        },
+
+        async logout() {
+          try { await fetch('/api/auth/logout', { method: 'POST' }); } catch {}
+          this.authenticated = false;
+          this.authToken = null;
+          if (this.ws) { this.ws.close(); this.ws = null; }
+          this.status = 'disconnected';
+          this.messages = [];
+          this.$nextTick(() => this.$refs.passwordInput?.focus());
+        },
+
+        connect() {
+          const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+          // Pass auth token as query param for WebSocket auth
+          const tokenParam = this.authToken ? `?token=${this.authToken}` : '';
+          this.ws = new WebSocket(`${proto}//${location.host}${tokenParam}`);
+
+          this.ws.onopen = () => {
+            this.status = 'idle';
+            // Welcome message
+            this.messages.push({
+              type: 'text',
+              content: "Hi! Welcome to the Primal Zone HubSpot Agent. How can I help you today?\n\nI'm just loading your reports — this will take a moment.",
+            });
+            this.scrollDown();
+            // Start loading reports + summary in the background
+            this.loadSummary();
+            this.loadReports();
+          };
+
+          this.ws.onclose = () => {
+            this.status = 'disconnected';
+            setTimeout(() => this.connect(), 2000);
+          };
+
+          this.ws.onmessage = (e) => {
+            const msg = JSON.parse(e.data);
+            this.handleMessage(msg);
+          };
+        },
+
+        handleMessage(msg) {
+          switch (msg.type) {
+            case 'session':
+              this.sessionId = msg.sessionId;
+              break;
+            case 'status':
+              this.status = msg.content;
+              break;
+            case 'text':
+              this.messages.push({ type: 'text', content: msg.content });
+              this.scrollDown();
+              break;
+            case 'tool_call':
+              this.messages.push({ type: 'tool_call', content: msg.content });
+              this.scrollDown();
+              break;
+            case 'confirm_request':
+              this.messages.push({
+                type: 'confirm_request',
+                content: msg.content,
+                pending: true,
+                approved: false,
+              });
+              this.scrollDown();
+              break;
+            case 'error':
+              this.messages.push({ type: 'error', content: msg.content });
+              this.scrollDown();
+              break;
+            case 'done':
+              break;
+          }
+        },
+
+        send() {
+          const text = this.input.trim();
+          if (!text || this.status !== 'idle') return;
+          this.messages.push({ type: 'user', content: text });
+          this.ws.send(JSON.stringify({ type: 'message', text }));
+          this.input = '';
+          this.scrollDown();
+        },
+
+        confirm(approved, index) {
+          this.messages[index].pending = false;
+          this.messages[index].approved = approved;
+          this.ws.send(JSON.stringify({ type: 'confirm', approved }));
+        },
+
+        newSession() {
+          this.messages = [];
+          this.ws.send(JSON.stringify({ type: 'new_session' }));
+        },
+
+        scrollDown() {
+          this.$nextTick(() => {
+            const el = this.$refs.messages;
+            el.scrollTop = el.scrollHeight;
+          });
+        },
+
+        // ── Dashboard ────────────────────────────────────
+        toggleDashboard() {
+          this.dashboardOpen = !this.dashboardOpen;
+          if (this.dashboardOpen && !this.dashboardStats) {
+            this.loadDashboard();
+          }
+        },
+
+        async loadDashboard() {
+          this.dashboardLoading = true;
+          try {
+            const res = await fetch('/api/pipeline-stats');
+            this.dashboardStats = await res.json();
+          } catch (err) {
+            console.error('Failed to load dashboard:', err);
+          }
+          this.dashboardLoading = false;
+        },
+
+        askAboutStage(stageName) {
+          this.input = `Show me deals in "${stageName}" stage`;
+          this.send();
+        },
+
+        timeAgo(isoStr) {
+          if (!isoStr) return '';
+          const diff = Date.now() - new Date(isoStr).getTime();
+          const secs = Math.floor(diff / 1000);
+          if (secs < 60) return 'just now';
+          const mins = Math.floor(secs / 60);
+          if (mins < 60) return mins + 'm ago';
+          const hrs = Math.floor(mins / 60);
+          return hrs + 'h ago';
+        },
+
+        // ── Quick-View Side Panel ────────────────────────
+        handleChatClick(e) {
+          // Find the anchor — could be the target itself or a parent
+          const link = e.target.closest('a[href]');
+          if (!link) return;
+
+          const href = link.getAttribute('href');
+          // Match HubSpot record URLs
+          const hsMatch = href.match(/app-na2\.hubspot\.com\/contacts\/\d+\/(contact|deal|record\/[\w-]+)\/(\d+)/);
+          if (hsMatch) {
+            e.preventDefault();
+            e.stopPropagation();
+            let objType;
+            const id = hsMatch[2];
+            if (hsMatch[1] === 'contact') objType = 'contacts';
+            else if (hsMatch[1] === 'deal') objType = 'deals';
+            else {
+              const recMatch = href.match(/record\/([\w-]+)\/(\d+)/);
+              objType = recMatch ? recMatch[1] : 'unknown';
+            }
+            this.openPanel(objType, id);
+            return false;
+          }
+        },
+
+        async openPanel(objectType, objectId) {
+          this.panelOpen = true;
+          this.panelLoading = true;
+          this.panelError = null;
+          this.panelData = null;
+
+          try {
+            const res = await fetch(`/api/object/${encodeURIComponent(objectType)}/${objectId}`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+
+            // Format display properties
+            const displayProps = this.formatProps(data.objectType, data.properties);
+
+            this.panelData = {
+              objectType: this.friendlyType(data.objectType),
+              title: this.getTitle(data.objectType, data.properties),
+              displayProps,
+              associations: data.associations,
+              url: data.url,
+            };
+          } catch (err) {
+            this.panelError = 'Failed to load: ' + err.message;
+          }
+
+          this.panelLoading = false;
+        },
+
+        closePanel() {
+          this.panelOpen = false;
+        },
+
+        friendlyType(type) {
+          if (type === 'contacts') return 'Contact';
+          if (type === 'deals') return 'Deal';
+          if (type === 'prescriptions' || type.startsWith('2-')) return 'Prescription';
+          return type;
+        },
+
+        getTitle(type, props) {
+          if (type === 'contacts') {
+            return ((props.firstname || '') + ' ' + (props.lastname || '')).trim() || 'Unknown';
+          }
+          if (type === 'deals') return props.dealname || 'Untitled Deal';
+          return props.prescription_name || props.medication_name || 'Record';
+        },
+
+        formatProps(type, props) {
+          const entries = [];
+          const skip = new Set(['hs_object_id', '_stageName']);
+
+          if (type === 'contacts') {
+            const ordered = [
+              ['Name', ((props.firstname || '') + ' ' + (props.lastname || '')).trim()],
+              ['Email', props.email],
+              ['Phone', props.phone || props.mobilephone],
+              ['DOB', this.fmtDate(props.date_of_birth)],
+              ['Gender', props.gender],
+              ['Lifecycle', props.lifecyclestage],
+              ['PZ Patient ID', props.pz_patient_id],
+              ['Created', this.fmtDate(props.createdate)],
+              ['Medications', props.med_current_medications],
+              ['Allergies', props.med_allergies],
+              ['Conditions', props.med_medical_conditions],
+            ];
+            return ordered.filter(([, v]) => v);
+          }
+
+          if (type === 'deals') {
+            const ordered = [
+              ['Deal', props.dealname],
+              ['Stage', props._stageName || props.dealstage],
+              ['Amount', props.amount ? '$' + parseFloat(props.amount).toFixed(2) : null],
+              ['Created', this.fmtDate(props.createdate)],
+              ['Modified', this.fmtDate(props.hs_lastmodifieddate)],
+              ['Repeats', props.pz_repeats_allowed ? `${props.pz_repeats_used || 0}/${props.pz_repeats_allowed}` : null],
+              ['Interval', props.pz_repeat_interval_days ? props.pz_repeat_interval_days + ' days' : null],
+              ['Last Dispensed', this.fmtDate(props.pz_last_dispensed_date)],
+              ['Next Unlock', this.fmtDate(props.pz_next_unlock_date)],
+              ['Checkout URL', props.shopify_checkout_url],
+            ];
+            return ordered.filter(([, v]) => v);
+          }
+
+          // Prescriptions / other
+          const ordered = [
+            ['Name', props.prescription_name],
+            ['Status', props.prescription_status],
+            ['Medication', props.medication_name],
+            ['Dose', props.dose],
+            ['Frequency', props.frequency],
+            ['Duration', props.duration],
+            ['Quantity', props.quantity],
+            ['Instructions', props.instructions],
+            ['Prescriber', props.prescriber_name],
+            ['Prescribed', this.fmtDate(props.prescriber_date)],
+            ['ScriptPad ID', props.scriptpad_recipe_id],
+            ['ScriptPad Status', props.scriptpad_status],
+            ['Created', this.fmtDate(props.createdate)],
+          ];
+          return ordered.filter(([, v]) => v);
+        },
+
+        fmtDate(val) {
+          if (!val) return null;
+          try {
+            // Handle epoch timestamps (milliseconds)
+            let d;
+            if (/^\d{10,13}$/.test(String(val))) {
+              const ms = String(val).length === 10 ? Number(val) * 1000 : Number(val);
+              d = new Date(ms);
+            } else {
+              d = new Date(val);
+            }
+            if (isNaN(d.getTime())) return val;
+            return d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
+          } catch {
+            return val;
+          }
+        },
+
+        // ── View switching ─────────────────────────────────
+        switchView(view) {
+          this.activeView = view;
+          if (view === 'reports') {
+            if (this.reportResults.length === 0) {
+              this.loadReports();
+            } else {
+              // Re-render charts that may have failed while hidden
+              this._renderAllCharts();
+            }
+            if (this.summaryKPIs.length === 0) this.loadSummary();
+          }
+          if (view === 'actions' && !this.actionsData) {
+            this.loadActions();
+          }
+          if (view === 'sales-coach') {
+            if (!this.salesCoachData) this.loadSalesCoach();
+            this.loadAutopilotStatus();
+          }
+        },
+
+        // ── Reports ───────────────────────────────────────
+        _reportsMeta: {},         // { dashboardId: [{id, title, chartType}, ...] }
+        _loadSequence: 0,         // bumped on each load to cancel stale fetches
+
+        switchReportDashboard(dashId) {
+          this.reportDashboard = dashId;
+          this.loadReports();
+        },
+
+        async loadReports(force = false) {
+          // Destroy existing charts
+          Object.values(_chartInstances).forEach(c => { try { c.destroy(); } catch(e) {} });
+          Object.keys(_chartInstances).forEach(k => delete _chartInstances[k]);
+
+          this.reportsError = null;
+          const seq = ++this._loadSequence;   // Cancel any in-flight sequence
+
+          // 1. Get report metadata (fast — no HubSpot calls)
+          if (!this._reportsMeta[this.reportDashboard]) {
+            try {
+              const listRes = await fetch('/api/reports/list');
+              if (listRes.ok) {
+                const listData = await listRes.json();
+                this._reportsMeta = listData.reports;
+              }
+            } catch(e) { /* fallback below */ }
+          }
+
+          // Capture current dashboard + range so they don't change mid-loop
+          const dashId = this.reportDashboard;
+          const rangeKey = this.reportDateRange;
+          const meta = this._reportsMeta[dashId] || [];
+
+          if (meta.length === 0) {
+            // Fallback: load all at once (old behaviour)
+            this.reportsLoading = true;
+            this.reportResults = [];
+            try {
+              const url = '/api/reports/' + dashId + '?range=' + rangeKey;
+              const res = await fetch(url);
+              if (!res.ok) throw new Error('HTTP ' + res.status);
+              if (this._loadSequence !== seq) return;
+              this.reportResults = await res.json();
+            } catch (err) {
+              if (this._loadSequence !== seq) return;
+              this.reportsError = 'Failed to load reports: ' + err.message;
+            }
+            this.reportsLoading = false;
+            this._renderAllCharts();
+            return;
+          }
+
+          // 2. Create placeholder cards immediately (shows loading spinners)
+          this.reportResults = meta.map(m => ({
+            reportId: m.id,
+            title: m.title,
+            chartType: m.chartType,
+            dateRange: { from: '', to: '', label: '' },
+            data: {},
+            _loading: true,
+          }));
+          this.reportsLoading = false;    // Grid is visible with placeholders
+
+          // 3. Fetch each report one-by-one (sequential = less rate-limiter thrashing)
+          for (let i = 0; i < meta.length; i++) {
+            if (this._loadSequence !== seq) return;  // User switched dashboard/range
+            const m = meta[i];
+            try {
+              const url = '/api/reports/' + dashId + '/' + m.id + '?range=' + rangeKey;
+              const res = await fetch(url);
+              if (this._loadSequence !== seq) return;  // Stale after await
+              if (!res.ok) throw new Error('HTTP ' + res.status);
+              const report = await res.json();
+              if (this._loadSequence !== seq) return;  // Stale after await
+              report._loading = false;
+              // Replace placeholder in-place so Alpine re-renders just this card
+              this.reportResults.splice(i, 1, report);
+              // Render chart for this report after DOM update
+              this.$nextTick(() => {
+                this.$nextTick(() => {
+                  setTimeout(() => {
+                    if (['bar', 'line', 'doughnut'].includes(report.chartType)) {
+                      this.renderChart(report);
+                    }
+                  }, 100);
+                });
+              });
+            } catch (err) {
+              if (this._loadSequence !== seq) return;
+              this.reportResults.splice(i, 1, {
+                reportId: m.id,
+                title: m.title,
+                chartType: m.chartType,
+                dateRange: { from: '', to: '', label: '' },
+                data: { kpiValue: 'Error', kpiDelta: err.message || 'Failed to load' },
+                _loading: false,
+              });
+            }
+          }
+        },
+
+        _renderAllCharts() {
+          this.$nextTick(() => {
+            this.$nextTick(() => {
+              setTimeout(() => {
+                for (const report of this.reportResults) {
+                  if (['bar', 'line', 'doughnut'].includes(report.chartType)) {
+                    this.renderChart(report);
+                  }
+                }
+              }, 300);
+            });
+          });
+        },
+
+        async refreshReports() {
+          // Clear server cache then reload
+          try { await fetch('/api/reports/cache/clear', { method: 'POST' }); } catch(e) {}
+          this.summaryKPIs = [];    // Force summary reload too
+          this.loadSummary();
+          this.loadReports(true);
+        },
+
+        async loadSummary() {
+          try {
+            const res = await fetch('/api/reports/summary');
+            if (res.ok) {
+              this.summaryKPIs = await res.json();
+            }
+          } catch (err) {
+            console.error('Summary KPIs failed:', err);
+          }
+        },
+
+        exportCSV(report) {
+          let csv = '';
+          if (report.data.rows && report.data.rows.length > 0) {
+            const cols = Object.keys(report.data.rows[0]);
+            csv = cols.join(',') + '\n';
+            csv += report.data.rows.map(row => cols.map(c => `"${row[c]}"`).join(',')).join('\n');
+          } else if (report.data.labels && report.data.values) {
+            csv = 'Label,Value\n';
+            csv += report.data.labels.map((l, i) => `"${l}",${report.data.values[i]}`).join('\n');
+          } else if (report.data.kpiValue !== undefined) {
+            csv = `Metric,Value\n"${report.title}","${report.data.kpiValue}"`;
+            if (report.data.kpiDelta) csv += `\nNote,"${report.data.kpiDelta}"`;
+          }
+          if (!csv) return;
+          const blob = new Blob([csv], { type: 'text/csv' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `${report.reportId}-${this.reportDateRange}.csv`;
+          a.click();
+          URL.revokeObjectURL(url);
+        },
+
+        renderChart(report, retries = 0) {
+          const canvasId = 'chart-' + report.reportId;
+          const canvas = document.getElementById(canvasId);
+          if (!canvas || canvas.offsetWidth === 0 || canvas.offsetHeight === 0) {
+            // Canvas not in DOM or not visible yet — retry up to 10 times
+            if (retries < 10) {
+              setTimeout(() => this.renderChart(report, retries + 1), 200);
+            }
+            return;
+          }
+
+          // Destroy existing chart on this canvas
+          if (_chartInstances[canvasId]) {
+            _chartInstances[canvasId].destroy();
+            delete _chartInstances[canvasId];
+          }
+
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            // Context not available — retry
+            if (retries < 10) {
+              setTimeout(() => this.renderChart(report, retries + 1), 250);
+            }
+            return;
+          }
+          const colors = [
+            '#4ade80', '#22d3ee', '#a78bfa', '#f472b6',
+            '#fbbf24', '#fb923c', '#34d399', '#60a5fa',
+            '#e879f9', '#f87171',
+          ];
+
+          const config = {
+            type: report.chartType,
+            data: {
+              labels: report.data.labels || [],
+              datasets: [{
+                data: report.data.values || [],
+                backgroundColor: report.chartType === 'doughnut'
+                  ? colors.slice(0, (report.data.labels || []).length)
+                  : 'rgba(74, 222, 128, 0.6)',
+                borderColor: report.chartType === 'doughnut'
+                  ? colors.slice(0, (report.data.labels || []).length)
+                  : '#4ade80',
+                borderWidth: report.chartType === 'doughnut' ? 0 : 2,
+                borderRadius: report.chartType === 'bar' ? 4 : 0,
+                tension: 0.3,
+                fill: report.chartType === 'line' ? { target: 'origin', above: 'rgba(74,222,128,0.08)' } : false,
+                pointBackgroundColor: '#4ade80',
+                pointRadius: report.chartType === 'line' ? 3 : 0,
+              }],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: {
+                  display: report.chartType === 'doughnut',
+                  position: 'right',
+                  labels: {
+                    color: '#94a3b8',
+                    font: { size: 11 },
+                    boxWidth: 12,
+                    padding: 8,
+                  },
+                },
+                tooltip: {
+                  backgroundColor: '#1a1d27',
+                  titleColor: '#e4e4e7',
+                  bodyColor: '#e4e4e7',
+                  borderColor: '#2a2d3a',
+                  borderWidth: 1,
+                  padding: 10,
+                  callbacks: {
+                    label: function(ctx) {
+                      const val = ctx.raw;
+                      if (report.reportId.includes('revenue')) {
+                        return '$' + val.toLocaleString();
+                      }
+                      return val.toLocaleString();
+                    }
+                  }
+                },
+              },
+              scales: report.chartType === 'doughnut' ? {} : {
+                x: {
+                  ticks: { color: '#71717a', font: { size: 10 }, maxRotation: 45 },
+                  grid: { color: 'rgba(148,163,184,0.06)' },
+                },
+                y: {
+                  ticks: {
+                    color: '#71717a',
+                    font: { size: 10 },
+                    callback: function(val) {
+                      if (report.reportId.includes('revenue')) {
+                        return '$' + (val >= 1000 ? (val/1000).toFixed(0) + 'k' : val);
+                      }
+                      return val.toLocaleString();
+                    }
+                  },
+                  grid: { color: 'rgba(148,163,184,0.06)' },
+                  beginAtZero: true,
+                },
+              },
+            },
+          };
+
+          _chartInstances[canvasId] = new Chart(ctx, config);
+        },
+
+        funnelWidth(values, idx) {
+          if (!values || values.length === 0) return 0;
+          const max = Math.max(...values);
+          return max > 0 ? (values[idx] / max * 100) : 0;
+        },
+
+        // ── Actions ──────────────────────────────────────
+        async loadActions(forceRegenerate = false) {
+          this.actionsLoading = true;
+          this.actionsPending = false;
+          try {
+            const url = forceRegenerate ? '/api/actions/generate' : '/api/actions';
+            const opts = forceRegenerate ? { method: 'POST' } : {};
+            const res = await fetch(url, opts);
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const data = await res.json();
+            if (data.status === 'pending') {
+              this.actionsPending = true;
+              this.actionsData = null;
+              // Auto-retry in 10 seconds
+              if (this._actionsPollTimer) clearTimeout(this._actionsPollTimer);
+              this._actionsPollTimer = setTimeout(() => {
+                if (this.activeView === 'actions' && this.actionsPending) {
+                  this.loadActions();
+                }
+              }, 10000);
+            } else {
+              this.actionsData = data;
+              this.actionsPending = false;
+              if (this._actionsPollTimer) { clearTimeout(this._actionsPollTimer); this._actionsPollTimer = null; }
+            }
+          } catch (err) {
+            console.error('Failed to load actions:', err);
+            this.actionsPending = true;
+          }
+          this.actionsLoading = false;
+        },
+
+        discussAction(action) {
+          this.activeView = 'chat';
+          const msg = `Tell me more about this recommendation: "${action.title}"\n\nProblem: ${action.problem}\n\nSuggested action: ${action.action}`;
+          this.input = msg;
+          this.$nextTick(() => this.send());
+        },
+
+        // ── Sales Coach ─────────────────────────────────────
+        _initSalesCoachRecs(data) {
+          // Ensure _activating property exists on each rec for Alpine reactivity
+          if (data && data.recommendations) {
+            data.recommendations.forEach(r => { r._activating = false; });
+          }
+          return data;
+        },
+
+        async loadSalesCoach() {
+          this.salesCoachLoading = true;
+          this.salesCoachError = null;
+          try {
+            const res = await fetch('/api/coach/recommendations');
+            if (!res.ok) throw new Error('Failed to load recommendations');
+            this.salesCoachData = this._initSalesCoachRecs(await res.json());
+          } catch (e) {
+            this.salesCoachError = e.message || 'Failed to load recommendations';
+          }
+          this.salesCoachLoading = false;
+        },
+
+        async refreshSalesCoach() {
+          this.salesCoachLoading = true;
+          this.salesCoachError = null;
+          try {
+            const res = await fetch('/api/coach/recommendations/generate', {
+              method: 'POST',
+            });
+            if (!res.ok) throw new Error('Failed to generate recommendations');
+            this.salesCoachData = this._initSalesCoachRecs(await res.json());
+          } catch (e) {
+            this.salesCoachError = e.message || 'Failed to generate recommendations';
+          }
+          this.salesCoachLoading = false;
+        },
+
+        async activateRecommendation(index) {
+          const rec = this.salesCoachData.recommendations[index];
+          if (rec.activated || rec._activating) return;
+          rec._activating = true;
+          try {
+            const res = await fetch(`/api/coach/recommendations/${index}/activate`, {
+              method: 'POST',
+            });
+            if (!res.ok) {
+              const err = await res.json().catch(() => ({}));
+              throw new Error(err.error || 'Failed to create task');
+            }
+            const data = await res.json();
+            rec.activated = true;
+            rec.taskId = data.task?.id || null;
+            rec.taskUrl = data.task?.url || null;
+          } catch (e) {
+            alert('Error: ' + (e.message || 'Could not create task'));
+          }
+          rec._activating = false;
+        },
+
+        copyCopyExample(text, event) {
+          navigator.clipboard.writeText(text).then(() => {
+            const btn = event.target;
+            const orig = btn.textContent;
+            btn.textContent = 'Copied!';
+            setTimeout(() => { btn.textContent = orig; }, 1500);
+          }).catch(() => {});
+        },
+
+        // ── Auto-Pilot ──────────────────────────────────────
+        async loadAutopilotStatus() {
+          try {
+            const res = await fetch('/api/autopilot/status');
+            if (res.ok) this.autopilotStatus = await res.json();
+          } catch { /* silent */ }
+        },
+
+        async toggleAutopilot(enable) {
+          try {
+            const endpoint = enable ? '/api/autopilot/start' : '/api/autopilot/stop';
+            const res = await fetch(endpoint, { method: 'POST' });
+            if (res.ok) {
+              const data = await res.json();
+              this.autopilotStatus = { ...this.autopilotStatus, ...data };
+            }
+          } catch (e) {
+            console.error('Autopilot toggle failed:', e);
+          }
+        },
+
+        // ── Markdown renderer ────────────────────────────
+        renderMarkdown(text) {
+          if (!text) return '';
+
+          // Escape HTML
+          let html = text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+
+          // Code blocks (before other transforms)
+          html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
+
+          // Markdown tables: detect lines with pipes
+          html = html.replace(/((?:^\|.+\|$\n?)+)/gm, (tableBlock) => {
+            const rows = tableBlock.trim().split('\n').filter(r => r.trim());
+            if (rows.length < 2) return tableBlock;
+
+            const isSep = /^\|[\s\-:]+\|/.test(rows[1]);
+            const dataRows = isSep ? [rows[0], ...rows.slice(2)] : rows;
+
+            let table = '<table>';
+            dataRows.forEach((row, i) => {
+              const cells = row.split('|').filter((c, ci, arr) => ci > 0 && ci < arr.length - 1);
+              const tag = (i === 0 && isSep) ? 'th' : 'td';
+              table += '<tr>' + cells.map(c => `<${tag}>${c.trim()}</${tag}>`).join('') + '</tr>';
+            });
+            table += '</table>';
+            return table;
+          });
+
+          // Inline code
+          html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+          // Bold
+          html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+
+          // Links: [text](url)
+          html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g,
+            '<a href="$2" target="_blank" rel="noopener">$1</a>');
+
+          // Line breaks
+          html = html.replace(/\n/g, '<br>');
+
+          // Clean up extra <br> around block elements
+          html = html.replace(/<br>\s*(<table|<\/table>|<pre|<\/pre>)/g, '$1');
+          html = html.replace(/(<\/table>|<\/pre>)\s*<br>/g, '$1');
+
+          return html;
+        },
+      };
+    }
+  </script>
+</body>
+</html>
